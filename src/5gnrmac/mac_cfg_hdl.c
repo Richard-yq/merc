@@ -76,6 +76,19 @@ MacDuStatsRspFunc macDuStatsRspOpts[] =
    packDuMacStatsRsp   /* packing for light weight loosly coupled */
 };
 
+MacDuStatsDeleteRspFunc macDuStatsDeleteRspOpts[] =
+{
+   packDuMacStatsDeleteRsp,   /* packing for loosely coupled */
+   DuProcMacStatsDeleteRsp,   /* packing for tightly coupled */
+   packDuMacStatsDeleteRsp   /* packing for light weight loosly coupled */
+};
+
+MacDuStatsModificationRspFunc macDuStatsModificationRspOpts[] =
+{
+   packDuMacStatsModificationRsp,   /* packing for loosely coupled */
+   DuProcMacStatsModificationRsp,   /* packing for tightly coupled */
+   packDuMacStatsModificationRsp   /* packing for light weight loosly coupled */
+};
 
 /**
  * @brief Layer Manager  Configuration request handler for Scheduler
@@ -213,28 +226,28 @@ uint8_t MacProcCellCfgReq(Pst *pst, MacCellCfg *macCellCfg)
 
    for(plmnIdx = 0; plmnIdx < MAX_PLMN; plmnIdx++)
    {
-      macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].numSupportedSlice = macCellCfg->cellCfg.plmnInfoList[plmnIdx].numSupportedSlice;
-      MAC_ALLOC(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].snssai, macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].numSupportedSlice\
+      macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.numSupportedSlices = macCellCfg->cellCfg.plmnInfoList[plmnIdx].suppSliceList.numSupportedSlices;
+      MAC_ALLOC(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai, macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.numSupportedSlices\
             * sizeof(Snssai*));
-      if(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].snssai == NULLP)
+      if(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai == NULLP)
       {
          DU_LOG("\nERROR  --> MAC: Memory allocation failed at MacProcCellCfgReq");
          return RFAILED;
       }
 
-      if(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].snssai)
+      if(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai)
       {
-         for(sliceIdx=0; sliceIdx<macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].numSupportedSlice; sliceIdx++)
+         for(sliceIdx=0; sliceIdx<macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.numSupportedSlices; sliceIdx++)
          {
-            if(macCellCfg->cellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx])
+            if(macCellCfg->cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx])
             {
-               MAC_ALLOC(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx], sizeof(Snssai));
-               if(!macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx])
+               MAC_ALLOC(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx], sizeof(Snssai));
+               if(!macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx])
                {
                   DU_LOG("\nERROR  --> MAC: Memory allocation failed at MacProcCellCfgReq");
                   return RFAILED;
                }
-               memcpy(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx], macCellCfg->cellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx],\
+               memcpy(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx], macCellCfg->cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx],\
                      sizeof(Snssai));
             }
          }
@@ -288,26 +301,26 @@ uint8_t MacSchCellCfgReq(Pst *pst, MacCellCfg *macCellCfg)
    for(plmnIdx = 0; plmnIdx < MAX_PLMN; plmnIdx++)
    {
       schCellCfg.plmnInfoList[plmnIdx].plmn = macCellCfg->cellCfg.plmnInfoList[plmnIdx].plmn;
-      if(macCellCfg->cellCfg.plmnInfoList[plmnIdx].snssai) 
+      if(macCellCfg->cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai) 
       {
-         schCellCfg.plmnInfoList[plmnIdx].numSliceSupport = macCellCfg->cellCfg.plmnInfoList[plmnIdx].numSupportedSlice;
-         MAC_ALLOC(schCellCfg.plmnInfoList[plmnIdx].snssai, schCellCfg.plmnInfoList[plmnIdx].numSliceSupport * sizeof(Snssai*));
-         if(!schCellCfg.plmnInfoList[plmnIdx].snssai)
+         schCellCfg.plmnInfoList[plmnIdx].suppSliceList.numSupportedSlices = macCellCfg->cellCfg.plmnInfoList[plmnIdx].suppSliceList.numSupportedSlices;
+         MAC_ALLOC(schCellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai, schCellCfg.plmnInfoList[plmnIdx].suppSliceList.numSupportedSlices * sizeof(Snssai*));
+         if(!schCellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai)
          {
             DU_LOG("\nERROR  --> MAC: Memory allocation failed at MacSchCellCfgReq");
             return RFAILED;
          }
-         for(sliceIdx=0; sliceIdx<schCellCfg.plmnInfoList[plmnIdx].numSliceSupport; sliceIdx++)
+         for(sliceIdx=0; sliceIdx<schCellCfg.plmnInfoList[plmnIdx].suppSliceList.numSupportedSlices; sliceIdx++)
          {
-            if(macCellCfg->cellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx])
+            if(macCellCfg->cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx])
             {
-               MAC_ALLOC(schCellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx], sizeof(Snssai));
-               if(!schCellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx])
+               MAC_ALLOC(schCellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx], sizeof(Snssai));
+               if(!schCellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx])
                {
                   DU_LOG("\nERROR  --> MAC: Memory allocation failed at MacSchCellCfgReq");
                   return RFAILED;
                }
-               memcpy(schCellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx], macCellCfg->cellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx],  sizeof(Snssai));
+               memcpy(schCellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx], macCellCfg->cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx],  sizeof(Snssai));
             }
          }
       }
@@ -625,14 +638,14 @@ uint8_t MacProcSchCellDeleteRsp(Pst *pst, SchCellDeleteRsp *schCellDelRsp)
                cause = SUCCESSFUL;
                for(plmnIdx = 0; plmnIdx < MAX_PLMN; plmnIdx++)
                {
-                  if(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].snssai)
+                  if(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai)
                   {
-                     for(sliceIdx = 0; sliceIdx<macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].numSupportedSlice; sliceIdx++)
+                     for(sliceIdx = 0; sliceIdx<macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.numSupportedSlices; sliceIdx++)
                      {
-                        MAC_FREE(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].snssai[sliceIdx], sizeof(Snssai));
+                        MAC_FREE(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai[sliceIdx], sizeof(Snssai));
                      }
-                     MAC_FREE(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].snssai, macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].\
-                           numSupportedSlice * sizeof(Snssai*));
+                     MAC_FREE(macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].suppSliceList.snssai, macCb.macCell[cellIdx]->macCellCfg.cellCfg.plmnInfoList[plmnIdx].\
+                           suppSliceList.numSupportedSlices * sizeof(Snssai*));
                   }
                }
                MAC_FREE(macCb.macCell[cellIdx]->macCellCfg.cellCfg.sib1Cfg.sib1Pdu, \
@@ -1380,6 +1393,484 @@ uint8_t MacProcSchStatsRsp(Pst *pst, SchStatsRsp *schStatsRsp)
       ret = MacSendStatsRspToDuApp(macStatsRsp);
    }
    MAC_FREE(schStatsRsp, sizeof(SchStatsRsp));
+   return ret;
+}
+
+/**
+ * @brief Fill and send statistics delete response to DU APP
+ *
+ * @details
+ *
+ *     Function : MacSendStatsDeleteRspToDuApp
+ *
+ *     Fill and send statistics delete response to DU APP
+ *  [Step-1] In SCH delete response is received, fill MAC stats delete 
+ *    response with info from SCH stats delete response.
+ *  [Step-2] If a failure occurs while processing MAC stats delete request, 
+ *    then fill MAC stats delete rsp with failure using info from MAC stats delete request.
+ *  [Step-3] Else if numStatsGroup > 0, then send stats delete response 
+ *    with deletion status of each stats group.
+ *  [Step-4] If numStatsGroup = 0, send Stats delete response 
+ *    for deletion of complete subscription.
+ *
+ *  @param[in]  SchStatsDeleteRsp
+ *  @param[in]  MacStatsDeleteReq
+ *  @return  int
+ *      -# ROK
+ **/
+uint8_t MacSendStatsDeleteRspToDuApp(SchStatsDeleteRsp *schStatsDeleteRsp,  MacStatsDeleteReq *macStatsDeleteReq)
+{
+   Pst  pst;
+   uint8_t ret = ROK, idx=0;
+   MacStatsDeleteRsp *macStatsDeleteRsp=NULLP;
+
+   MAC_ALLOC_SHRABL_BUF(macStatsDeleteRsp, sizeof(MacStatsDeleteRsp));
+   if(macStatsDeleteRsp == NULLP)
+   {
+      DU_LOG("\nERROR  -->  MAC : Failed to allocate memory in MacProcSchStatsDeleteRsp");
+      ret = RFAILED;
+   }
+   
+   if(schStatsDeleteRsp)
+   {
+      /* [Step-1] */ 
+      macStatsDeleteRsp->subscriptionId = schStatsDeleteRsp->subscriptionId;
+      macStatsDeleteRsp->numStatsGroupDeleted = schStatsDeleteRsp->numStatsGroupDeleted;
+
+      if(macStatsDeleteRsp->numStatsGroupDeleted)
+      {
+         /* [Step-3] */ 
+         for(idx =0;idx<macStatsDeleteRsp->numStatsGroupDeleted; idx++)
+         {
+            if(schStatsDeleteRsp->statsGrpDelInfo[idx].statsGrpDelRsp == RSP_OK)
+            {
+               macStatsDeleteRsp->statsGrpDelInfo[idx].statsGrpDelRsp =MAC_DU_APP_RSP_OK;
+               macStatsDeleteRsp->statsGrpDelInfo[idx].statsGrpDelCause =schStatsDeleteRsp->statsGrpDelInfo[idx].statsGrpDelCause;
+            }
+            else
+            {
+               macStatsDeleteRsp->statsGrpDelInfo[idx].statsGrpDelRsp =MAC_DU_APP_RSP_NOK;
+               macStatsDeleteRsp->statsGrpDelInfo[idx].statsGrpDelCause =schStatsDeleteRsp->statsGrpDelInfo[idx].statsGrpDelCause;
+            }
+         }
+      }
+      else
+      {
+         /* [Step-4] */ 
+         if(schStatsDeleteRsp->subsDelRsp == RSP_OK)
+            macStatsDeleteRsp->subsDelRsp = MAC_DU_APP_RSP_OK;
+         else
+            macStatsDeleteRsp->subsDelRsp = MAC_DU_APP_RSP_NOK;
+         macStatsDeleteRsp->subsDelCause = schStatsDeleteRsp->subsDelCause;
+      }
+   }
+   else
+   {
+      /* [Step-2] */ 
+      macStatsDeleteRsp->subscriptionId = macStatsDeleteReq->subscriptionId;
+      macStatsDeleteRsp->numStatsGroupDeleted= macStatsDeleteReq->numStatsGroupToBeDeleted;
+      
+      if(macStatsDeleteRsp->numStatsGroupDeleted)
+      {
+         /* [Step-3] */ 
+         for(idx =0;idx<macStatsDeleteRsp->numStatsGroupDeleted; idx++)
+         {
+            macStatsDeleteRsp->statsGrpDelInfo[idx].statsGrpDelRsp =MAC_DU_APP_RSP_NOK;
+            macStatsDeleteRsp->statsGrpDelInfo[idx].statsGrpDelCause = RESOURCE_UNAVAILABLE;
+         }
+      }
+      else
+      {
+         /* [Step-4] */ 
+         macStatsDeleteRsp->subsDelRsp = MAC_DU_APP_RSP_NOK;
+         macStatsDeleteRsp->subsDelCause = RESOURCE_UNAVAILABLE;
+      }
+   }
+
+   DU_LOG("\nINFO  -->  MAC : MacSendStatsDeleteRspToDuApp: Sending Delete Statistics Response to DU APP");
+
+   memset(&pst, 0, sizeof(Pst));
+   FILL_PST_MAC_TO_DUAPP(pst, EVENT_MAC_STATS_DELETE_RSP);
+   if(((*macDuStatsDeleteRspOpts[pst.selector])(&pst, macStatsDeleteRsp))!= ROK)
+   {
+      DU_LOG("\nERROR  -->  MAC : Failed to send statistics delete response to DU APP");
+      MAC_FREE_SHRABL_BUF(MAC_MEM_REGION, MAC_POOL, macStatsDeleteRsp, sizeof(MacStatsDeleteRsp));
+      ret = RFAILED;
+   }
+
+   return ret;
+}
+                 
+/**
+ * @brief Mac process the statistics delete rsp received from sch.
+ *
+ * @details
+ *
+ *     Function : MacProcSchStatsDeleteRsp
+ *
+ *     This function  process the statistics delete response received from sch
+ *
+ *  @param[in]  Pst           *pst
+ *  @param[in]  SchStatsDeleteRsp *schStatsDeleteRsp
+ *  @return  int
+ *      -# ROK
+ **/
+uint8_t MacProcSchStatsDeleteRsp(Pst *pst, SchStatsDeleteRsp *schStatsDeleteRsp)
+{
+   uint8_t ret = RFAILED;
+
+   if(schStatsDeleteRsp)
+   {
+      ret = MacSendStatsDeleteRspToDuApp(schStatsDeleteRsp, NULLP);
+      MAC_FREE(schStatsDeleteRsp, sizeof(SchStatsDeleteRsp));
+   }
+   return ret;
+}
+
+/**
+ * @brief Mac process the statistics delete Req received from DUAPP
+ *
+ * @details
+ *
+ *     Function : MacProcStatsDeleteReq
+ *
+ *     Functionality: Process the statistics delete request from duapp
+ *  @param[in]  Pst      *pst
+ *  @param[in]  StatsDeleteReq *statsReq
+ *  @return  int
+ *      -# ROK
+ **/
+
+uint8_t MacProcStatsDeleteReq(Pst *pst, MacStatsDeleteReq *macStatsDeleteReq)
+{
+   Pst       schPst;
+   uint8_t   ret = RFAILED;
+   SchStatsDeleteReq  *schStatsDeleteReq = NULLP;
+ 
+   DU_LOG("\nINFO   -->  MAC : Received Statistics delete Request from DU_APP");
+
+   if(macStatsDeleteReq == NULLP)
+   {
+      DU_LOG("\nERROR  -->  MAC : MacProcStatsDeleteReq(): Received Null pointer");
+      return RFAILED;
+   }
+   
+   MAC_ALLOC(schStatsDeleteReq, sizeof(SchStatsDeleteReq));
+   if(schStatsDeleteReq == NULLP)
+   {
+      DU_LOG("\nERROR  -->  MAC : MacProcStatsDeleteReq: Failed to allocate memory");
+   }
+   else
+   {
+      /* fill all the information in schStatsDeleteReq structure */
+      schStatsDeleteReq->subscriptionId = macStatsDeleteReq->subscriptionId;
+      schStatsDeleteReq->numStatsGroupToBeDeleted = macStatsDeleteReq->numStatsGroupToBeDeleted;
+      memcpy(&schStatsDeleteReq->statsGrpIdToBeDelList, &macStatsDeleteReq->statsGrpIdToBeDelList, schStatsDeleteReq->numStatsGroupToBeDeleted*sizeof(uint8_t)); 
+      FILL_PST_MAC_TO_SCH(schPst, EVENT_STATISTICS_DELETE_REQ_TO_SCH);
+      ret = SchMessageRouter(&schPst, (void *)schStatsDeleteReq);
+   }
+
+   if(ret != ROK)
+   {
+      ret = MacSendStatsDeleteRspToDuApp(NULLP, macStatsDeleteReq);
+   }
+
+   MAC_FREE_SHRABL_BUF(pst->region, pst->pool, macStatsDeleteReq, sizeof(MacStatsDeleteReq));
+   return ret;
+}
+
+/**
+ * @brief Fill and send statistics modification response to DU APP
+ *
+ * @details
+ *
+ *     Function : MacSendStatsModificationRspToDuApp 
+ *
+ *     Fill and send statistics modification response to DU APP
+ *
+ *  @param[in]  Stats modification Response
+ *  @return  int
+ *      -# ROK
+ **/
+uint8_t MacSendStatsModificationRspToDuApp(MacStatsModificationRsp *tmpMacStatsModRsp)
+{
+   Pst  pst;
+   uint8_t ret = ROK;
+   MacStatsModificationRsp *macStatsModificationRsp = NULLP;
+
+   DU_LOG("\nINFO  -->  MAC : MacSendStatsModificationRspToDuApp: Sending Statistics Modification Response to DU APP");
+
+
+   MAC_ALLOC_SHRABL_BUF(macStatsModificationRsp, sizeof(MacStatsModificationRsp));
+   if(macStatsModificationRsp == NULLP)
+   {
+      DU_LOG("\nERROR  -->  MAC : Failed to allocate memory in MacProcSchStatsModificationRsp");
+      ret = RFAILED;
+   }
+   else
+   {
+      memcpy(macStatsModificationRsp, tmpMacStatsModRsp, sizeof(MacStatsModificationRsp));
+      memset(tmpMacStatsModRsp, 0, sizeof(MacStatsModificationRsp));
+
+      memset(&pst, 0, sizeof(Pst));
+      FILL_PST_MAC_TO_DUAPP(pst, EVENT_MAC_STATISTICS_MODIFY_RSP);
+      if(((*macDuStatsModificationRspOpts[pst.selector])(&pst, macStatsModificationRsp))!= ROK)
+      {
+         DU_LOG("\nERROR  -->  MAC : Failed to send statistics modification response to DU APP");
+         MAC_FREE_SHRABL_BUF(MAC_MEM_REGION, MAC_POOL, macStatsModificationRsp, sizeof(MacStatsModificationRsp));
+         ret = RFAILED;
+      }
+   }
+
+   return ret;
+}
+
+/**
+ * @brief Mac process the statistics modification rsp received from sch.
+ *
+ * @details
+ *
+ *     Function : MacProcSchStatsModificationRsp
+ *
+ *     This function  process the statistics modification response received from sch
+ *     [Step -1] Fetch pointer to statistics response from pending list saved at
+ *     MAC during processing statistics request from DU APP
+ *     [Step -2] Fill the list of accepted list
+ *     [Step -3] Fill the list of rejected list
+ *     [Step -4] Send statistics modification response to DU APP
+ *
+ *  @param[in]  Pst           *pst
+ *  @param[in]  SchStatsModificationRsp *schStatsModificationRsp
+ *  @return  int
+ *      -# ROK
+ **/
+uint8_t MacProcSchStatsModificationRsp(Pst *pst, SchStatsModificationRsp *schStatsModificationRsp)
+{
+   uint8_t ret = RFAILED;
+   uint8_t idx = 0, accptdIdx = 0, rjctdIdx = 0;
+   MacStatsModificationRsp *macStatsModificationRsp = NULLP;
+
+   if(schStatsModificationRsp)
+   {
+      /* [Step -1] */
+      for(idx = 0; idx < macCb.statistics.numPendingStatsRsp; idx++)
+      {
+         if(macCb.statistics.pendingStatsRsp[idx].subscriptionId == schStatsModificationRsp->subscriptionId)
+         {
+            macStatsModificationRsp = &macCb.statistics.pendingStatsRsp[idx];
+            break;
+         }
+      }
+
+      if(macStatsModificationRsp == NULLP)
+      {
+         MAC_FREE(schStatsModificationRsp, sizeof(SchStatsModificationRsp));
+         return RFAILED;
+      }
+      
+      /* [Step -2] */
+      for(accptdIdx = 0; accptdIdx<schStatsModificationRsp->numGrpAccepted && macStatsModificationRsp->numGrpAccepted<MAX_NUM_STATS_GRP; accptdIdx++)
+      {
+         macStatsModificationRsp->statsGrpAcceptedList[macStatsModificationRsp->numGrpAccepted++] = schStatsModificationRsp->statsGrpAcceptedList[accptdIdx];
+      }
+
+      /* [Step -3] */
+      for(rjctdIdx = 0; rjctdIdx < schStatsModificationRsp->numGrpRejected && macStatsModificationRsp->numGrpRejected<MAX_NUM_STATS_GRP; rjctdIdx++)
+      {
+         macStatsModificationRsp->statsGrpRejectedList[macStatsModificationRsp->numGrpRejected].groupId = \
+            schStatsModificationRsp->statsGrpRejectedList[rjctdIdx].groupId;
+         macStatsModificationRsp->statsGrpRejectedList[macStatsModificationRsp->numGrpRejected].cause = \
+            schStatsModificationRsp->statsGrpRejectedList[rjctdIdx].cause;
+         macStatsModificationRsp->numGrpRejected++;
+      }
+
+      /* [Step -4] */
+      ret = MacSendStatsModificationRspToDuApp(macStatsModificationRsp);
+   }
+   MAC_FREE(schStatsModificationRsp, sizeof(SchStatsModificationRsp));
+   return ret;
+}
+
+/*******************************************************************
+ *
+ * @brief Rejects all statistics modification group requested by DU APP
+ *
+ * @details
+ *
+ *    Function : MacRejectAllStatsModification
+ *
+ *    Functionality: Add all statistics modification group received in statistics
+ *       request from DU APP, to Reject-StatsModification-Group-List in statistics
+ *       response to DU APP
+ *
+ * @params[in]  Statistics request from DU APP
+ *              Cause of rejection
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+uint8_t MacRejectAllStatsModification(MacStatsModificationReq *macStatsModificationReq, CauseOfResult cause)
+{
+   uint8_t grpIdx = 0;
+   MacStatsModificationRsp macStatsModificationRsp;
+
+   memset(&macStatsModificationRsp, 0, sizeof(MacStatsModificationRsp));
+
+   /* fill the subscriptionId and the rejected list in stats modification rsp */
+   macStatsModificationRsp.subscriptionId = macStatsModificationReq->subscriptionId;
+   for(grpIdx = 0; grpIdx < macStatsModificationReq->numStatsGroup; grpIdx++)
+   {
+      macStatsModificationRsp.statsGrpRejectedList[grpIdx].groupId = macStatsModificationReq->statsGrpList[grpIdx].groupId;
+      macStatsModificationRsp.statsGrpRejectedList[grpIdx].cause = cause;
+   }
+   macStatsModificationRsp.numGrpRejected = macStatsModificationReq->numStatsGroup;
+
+   return MacSendStatsModificationRspToDuApp(&macStatsModificationRsp);
+}
+
+/**
+ * @brief Mac process the statistics Modification Req received from DUAPP
+ *
+ * @details
+ *
+ *     Function : MacProcStatsModificationReq
+ *
+ *     This function process the statistics Modification request from duapp:
+ *     [Step 1] Basic validation. If fails, all stats group in stats request are
+ *     rejected.
+ *     [Step 2] If basic validations passed, traverse all stats group and
+ *     validate each measurement types in each group.
+ *     [Step 3] If any measurement type validation fails in a group, that group
+ *     is not configured and it is added to stats-group-rejected-list in
+ *     mac-stats-response message.
+ *     [Step 4] Even if one group passes all validation, it is sent to SCH in
+ *     statistics request. The mac-stats-response message is added to
+ *     pending-response list. This will be sent to DU APP after stats response
+ *     is received from SCH.
+ *     [Step 5] If none of the groups passes all validation, mac-stats-response
+ *     is sent to du app with all group as part of stats-group-rejected-list.
+ *
+ *  @param[in]  Pst      *pst
+ *  @param[in]  StatsModificationReq *statsModificationReq
+ *  @return  int
+ *      -# ROK
+ **/
+uint8_t MacProcStatsModificationReq(Pst *pst, MacStatsModificationReq *macStatsModificationReq)
+{
+   Pst           schPst;
+   uint8_t       ret = RFAILED;
+   bool          measTypeInvalid = false;
+   uint8_t       macStatsGrpIdx = 0, macStatsIdx = 0;
+   uint8_t       schStatsGrpIdx = 0, schStatsIdx = 0;
+   MacStatsGrpInfo          *macStatsGrp = NULLP;
+   SchStatsModificationReq  *schStatsModificationReq = NULLP;
+   MacStatsModificationRsp  *macStatsModificationRsp = NULLP;
+
+   DU_LOG("\nINFO   -->  MAC : Received Statistics Modification Request from DU_APP");
+
+   if(macStatsModificationReq == NULLP)
+   {
+      DU_LOG("\nERROR  -->  MAC : MacProcStatsModificationReq(): Received Null pointer");
+      return RFAILED;
+   }
+
+   /* [Step -1] */
+   if(macCb.statistics.numPendingStatsRsp >= MAX_PENDING_STATS_RSP)
+   {
+      DU_LOG("\nERROR  -->  MAC : MacProcStatsModificationReq: Maximum number of statistics response is pending. \
+         Cannot process new request.");
+      MacRejectAllStatsModification(macStatsModificationReq, RESOURCE_UNAVAILABLE);
+      MAC_FREE_SHRABL_BUF(pst->region, pst->pool, macStatsModificationReq, sizeof(MacStatsModificationReq));
+      return RFAILED;
+   }
+
+   MAC_ALLOC(schStatsModificationReq, sizeof(SchStatsModificationReq));
+   if(schStatsModificationReq == NULLP)
+   {
+      DU_LOG("\nERROR  -->  MAC : MacProcStatsModificationReq: Failed to allocate memory");
+      MacRejectAllStatsModification(macStatsModificationReq, RESOURCE_UNAVAILABLE);
+      MAC_FREE_SHRABL_BUF(pst->region, pst->pool, macStatsModificationReq, sizeof(MacStatsModificationReq));
+      return RFAILED;
+   }
+
+   macStatsModificationRsp = &macCb.statistics.pendingStatsRsp[macCb.statistics.numPendingStatsRsp];
+   memset(macStatsModificationRsp, 0, sizeof(MacStatsModificationRsp));
+
+   /* [Step 2]  */
+   schStatsModificationReq->subscriptionId = macStatsModificationReq->subscriptionId;
+   schStatsModificationReq->numStatsGroup = 0;
+   for(macStatsGrpIdx = 0; macStatsGrpIdx < macStatsModificationReq->numStatsGroup; macStatsGrpIdx++)
+   {
+      measTypeInvalid = false;
+      schStatsIdx = 0;
+      macStatsGrp = &macStatsModificationReq->statsGrpList[macStatsGrpIdx];
+
+      for(macStatsIdx=0; macStatsIdx < macStatsGrp->numStats; macStatsIdx++)
+      {
+         switch(macStatsGrp->statsList[macStatsIdx])
+         {
+            case MAC_DL_TOTAL_PRB_USAGE:
+               {
+                  schStatsModificationReq->statsGrpList[schStatsGrpIdx].statsList[schStatsIdx] = SCH_DL_TOTAL_PRB_USAGE;
+                  break;
+               }
+            case MAC_UL_TOTAL_PRB_USAGE:
+               {
+                  schStatsModificationReq->statsGrpList[schStatsGrpIdx].statsList[schStatsIdx] = SCH_UL_TOTAL_PRB_USAGE;
+                  break;
+               }
+            default:
+               {
+                  DU_LOG("\nERROR  -->  MAC : MacProcStatsModificationReq: Invalid measurement type [%d]", \
+                     macStatsGrp->statsList[macStatsIdx]);
+                  measTypeInvalid = true;
+               }
+         }
+
+         if(measTypeInvalid)
+         {
+            memset(&schStatsModificationReq->statsGrpList[schStatsGrpIdx], 0, sizeof(SchStatsGrpInfo));
+            break;
+         }
+
+         schStatsIdx++;
+      }
+
+      if(!measTypeInvalid)
+      {
+         schStatsModificationReq->statsGrpList[schStatsGrpIdx].groupId = macStatsGrp->groupId;
+         schStatsModificationReq->statsGrpList[schStatsGrpIdx].periodicity = macStatsGrp->periodicity;
+         schStatsModificationReq->statsGrpList[schStatsGrpIdx].numStats = schStatsIdx;
+         schStatsGrpIdx++;
+      }
+      else
+      {
+         /* [Step 3] */
+         macStatsModificationRsp->statsGrpRejectedList[macStatsModificationRsp->numGrpRejected].groupId = macStatsGrp->groupId;
+         macStatsModificationRsp->statsGrpRejectedList[macStatsModificationRsp->numGrpRejected].cause = PARAM_INVALID;
+         macStatsModificationRsp->numGrpRejected++;
+      }
+   }
+   schStatsModificationReq->numStatsGroup = schStatsGrpIdx;
+
+   macStatsModificationRsp->subscriptionId = macStatsModificationReq->subscriptionId;
+   if(schStatsModificationReq->numStatsGroup)
+   {
+      /* [Step 4] */
+      macCb.statistics.numPendingStatsRsp++;
+
+      FILL_PST_MAC_TO_SCH(schPst, EVENT_STATISTICS_MODIFY_REQ_TO_SCH);
+      ret = SchMessageRouter(&schPst, (void *)schStatsModificationReq);
+   }
+   else
+   {
+      /* [Step 5] */
+      DU_LOG("\nERROR  -->  MAC : MacProcStatsModificationReq: All statistics group found invalid");
+      MAC_FREE(schStatsModificationReq, sizeof(SchStatsModificationReq));
+      ret = MacSendStatsModificationRspToDuApp(macStatsModificationRsp);
+   }
+
+   MAC_FREE_SHRABL_BUF(pst->region, pst->pool, macStatsModificationReq, sizeof(MacStatsModificationReq));
    return ret;
 }
 

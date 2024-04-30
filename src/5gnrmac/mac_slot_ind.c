@@ -518,7 +518,6 @@ uint8_t macProcSlotInd(SlotTimingInfo slotInd)
  *      -# ROK 
  *      -# RFAILED 
  **/
-
 uint8_t fapiMacSlotInd(Pst *pst, SlotTimingInfo *slotInd)
 {
    uint8_t               ret = ROK;

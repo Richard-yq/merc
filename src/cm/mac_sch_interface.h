@@ -54,6 +54,10 @@
 #define EVENT_STATISTICS_REQ_TO_SCH  35
 #define EVENT_STATISTICS_RSP_TO_MAC  36
 #define EVENT_STATISTICS_IND_TO_MAC  37
+#define EVENT_STATISTICS_DELETE_REQ_TO_SCH  38
+#define EVENT_STATISTICS_DELETE_RSP_TO_MAC  39
+#define EVENT_STATISTICS_MODIFY_REQ_TO_SCH  40
+#define EVENT_STATISTICS_MODIFY_RSP_TO_MAC  41
 
 /*macros*/
 #define MAX_SSB_IDX 1 /* forcing it as 1 for now. Right value is 64 */
@@ -118,6 +122,13 @@
 
 #define MAX_PHR_REPORT 1 /*TODO: Range of PHR reports in multiple PHR.*/
 #define MAX_FAILURE_DET_RESOURCES 10 /*Spec 38.331 'maxNrofFailureDetectionResources'*/
+
+/*As per SCF222_5GFAPI, 'MaxDciPerSlot' defines this value but this parameter value is missing in Spec.*/
+#ifdef INTEL_FAPI
+   #define MAX_NUM_PDCCH 1
+#else
+   #define MAX_NUM_PDCCH 2 
+#endif
 
 #define ADD_DELTA_TO_TIME(crntTime, toFill, incr, numOfSlot)          \
 {                                                          \
@@ -288,22 +299,22 @@ typedef enum
 
 typedef enum
 {
-   SLOT_PERIODICITY_AND_OFFSET_SL_1 = 1,
-   SLOT_PERIODICITY_AND_OFFSET_SL_2,
-   SLOT_PERIODICITY_AND_OFFSET_SL_4,
-   SLOT_PERIODICITY_AND_OFFSET_SL_5,
-   SLOT_PERIODICITY_AND_OFFSET_SL_8,
-   SLOT_PERIODICITY_AND_OFFSET_SL_10,
-   SLOT_PERIODICITY_AND_OFFSET_SL_16,
-   SLOT_PERIODICITY_AND_OFFSET_SL_20,
-   SLOT_PERIODICITY_AND_OFFSET_SL_40,
-   SLOT_PERIODICITY_AND_OFFSET_SL_80,
-   SLOT_PERIODICITY_AND_OFFSET_SL_160,
-   SLOT_PERIODICITY_AND_OFFSET_SL_320,
-   SLOT_PERIODICITY_AND_OFFSET_SL_640,
-   SLOT_PERIODICITY_AND_OFFSET_SL_1280,
-   SLOT_PERIODICITY_AND_OFFSET_SL_2560
-}SchMSlotPeriodAndOffset;
+   SLOT_PERIODICITY_SL_1 = 1,
+   SLOT_PERIODICITY_SL_2,
+   SLOT_PERIODICITY_SL_4,
+   SLOT_PERIODICITY_SL_5,
+   SLOT_PERIODICITY_SL_8,
+   SLOT_PERIODICITY_SL_10,
+   SLOT_PERIODICITY_SL_16,
+   SLOT_PERIODICITY_SL_20,
+   SLOT_PERIODICITY_SL_40,
+   SLOT_PERIODICITY_SL_80,
+   SLOT_PERIODICITY_SL_160,
+   SLOT_PERIODICITY_SL_320,
+   SLOT_PERIODICITY_SL_640,
+   SLOT_PERIODICITY_SL_1280,
+   SLOT_PERIODICITY_SL_2560
+}SchMSlotPeriodicity;
 
 typedef enum
 {
@@ -613,7 +624,7 @@ typedef struct pdcchCfg
    /* coreset-0 configuration */
    CoresetCfg coresetCfg;
    uint16_t   numDlDci;
-   DlDCI      dci; /* as of now its only one DCI, later it will be numDlCi */
+   DlDCI      dci[MAX_NUM_PDCCH]; 
 } PdcchCfg;
 /* end of SIB1 PDCCH structures */
 
@@ -778,8 +789,7 @@ typedef struct schBwpUlCfg
 typedef struct schPlmnInfoList
 {
    Plmn           plmn;
-   uint8_t        numSliceSupport; /* Total slice supporting */
-   Snssai         **snssai;         /* List of supporting snssai*/
+   SupportedSliceList suppSliceList;
 }SchPlmnInfoList;
 
 #ifdef NR_DRX
@@ -1438,6 +1448,13 @@ typedef struct schControlRsrcSet
    uint16_t            dmrsScramblingId;
 }SchControlRsrcSet;
 
+/*Slot Perioicity and Offset*/
+typedef struct schMSlotPeriodAndOffset
+{
+   SchMSlotPeriodicity  mSlotPeriodicity;
+   uint16_t             mSlotOffset;
+}SchMSlotPeriodAndOffset;
+
 /* Search Space info */
 typedef struct schSearchSpace
 {
@@ -1972,7 +1989,6 @@ typedef struct schModulationInfo
 typedef struct schUeCfgReq
 {
    uint16_t           cellId;
-   uint8_t            ueId;
    uint8_t            beamIdx; 
    uint16_t           crnti;
    bool               macCellGrpCfgPres;
@@ -1992,7 +2008,6 @@ typedef struct schUeCfgReq
 typedef struct schUeRecfgReq
 {
    uint16_t         cellId;
-   uint8_t          ueId;
    uint8_t          beamIdx;
    uint16_t         crnti;
    bool             macCellGrpRecfgPres;
@@ -2021,7 +2036,6 @@ typedef struct schUeCfgRsp
 {
    uint16_t   cellId;
    uint8_t    beamIdx;
-   uint16_t   ueId;
    uint16_t   crnti;
    SchMacRsp  rsp;
    CauseOfResult cause;
@@ -2264,6 +2278,9 @@ typedef struct schStatsReq
    SchStatsGrpInfo   statsGrpList[MAX_NUM_STATS_GRP];
 }SchStatsReq;
 
+typedef struct schStatsReq SchStatsModificationReq;
+typedef struct schStatsRsp SchStatsModificationRsp;
+
 /* Statistics Response from SCH to MAC */
 typedef struct schStatsGrpRejected
 {
@@ -2295,6 +2312,28 @@ typedef struct schStatsInd
    SchStats    measuredStatsList[MAX_NUM_STATS];
 }SchStatsInd;
 
+typedef struct schStatsDeleteReq
+{
+   uint64_t  subscriptionId;
+   uint8_t   numStatsGroupToBeDeleted;
+   uint8_t   statsGrpIdToBeDelList[MAX_NUM_STATS_GRP];
+}SchStatsDeleteReq;
+
+typedef struct statsDeleteResult
+{
+   uint8_t       groupId;
+   SchMacRsp     statsGrpDelRsp;
+   CauseOfResult statsGrpDelCause;
+}StatsDeleteResult;
+
+typedef struct schStatsDeleteRsp
+{
+   uint64_t          subscriptionId; /* subscription Id */
+   SchMacRsp         subsDelRsp;    /* deletion status of all statsGrp with given subscriptionId */
+   CauseOfResult     subsDelCause;  /* cause of failure in deletion of all statsGrp with given subscriptionId*/
+   uint8_t           numStatsGroupDeleted; /* num of action deleted */ 
+   StatsDeleteResult statsGrpDelInfo[MAX_NUM_STATS_GRP]; /* list of the deletion status for specific actions */
+}SchStatsDeleteRsp;
 
 /* function declarations */
 uint8_t MacMessageRouter(Pst *pst, void *msg);

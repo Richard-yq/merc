@@ -127,7 +127,6 @@ CmLList* isPrbAvailable(CmLListCp *freePrbBlockList, uint16_t startPrb, uint16_t
 void removeAllocatedPrbFromFreePrbList(CmLListCp *freePrbBlockList, CmLList *node, \
    uint16_t startPrb, uint16_t numPrb);
 uint8_t findDmrsStartSymbol(uint16_t dlDmrsSymbBitMap);
-void covertFreqDomRsrcMapToIAPIFormat(uint8_t *sourceBitMap, uint8_t *destBitMap);
 
 uint8_t updateLcListReqPRB(CmLListCp *lcLL, uint8_t lcId, uint32_t payloadSize);
 uint32_t calculateEstimateTBSize(uint32_t reqBO, uint16_t mcsIdx,uint8_t numSymbols,\
@@ -137,6 +136,13 @@ void deleteLcLL(CmLListCp *lcLL);
 CmLList *schPageInfoSearchFromPageList(SlotTimingInfo slotInfo, CmLListCp *storedPageList);
 void schDeleteFromPageInfoList(CmLListCp *list, CmLList *node);
 
+uint8_t countRBGFrmCoresetFreqRsrc(uint8_t *freqDomainRsrc);
+uint8_t findSsStartSymbol(uint8_t *mSymbolsWithinSlot);
+void fillCqiAggLvlMapping(SchPdcchInfo *pdcchInfo);
+uint8_t schUpdValY(SchUeCb *ueCb, SchPdcchInfo *pdcchInfo);
+uint16_t extractStartPrbForRBG(uint8_t *freqDomaRsrc, uint8_t rbgIndex);
+uint16_t schConvertSlotPeriodicityEnumToValue(SchMSlotPeriodicity slotPeriod);
+uint8_t extractNumOfCandForAggLvl(SchSearchSpace *searchSpace, uint8_t aggLvl);
 #if 0
 /*Will be enabled for debugging*/
 void printLcLL(CmLListCp *lcLL);

@@ -100,6 +100,7 @@ bool schFillBoGrantDlSchedInfo(SchCellCb *cell, SlotTimingInfo currTime, uint8_t
    SchUeCb *ueCb = NULLP;
    DlMsgSchInfo *dciSlotAlloc, *dlMsgAlloc;
    SlotTimingInfo pdcchTime, pdschTime, pucchTime;
+   SchPdcchAllocInfo pdcchAllocInfo;
 
    GET_CRNTI(crnti,ueId);
    ueCb = &cell->ueCb[ueId-1];
@@ -112,8 +113,10 @@ bool schFillBoGrantDlSchedInfo(SchCellCb *cell, SlotTimingInfo currTime, uint8_t
       }
    }
 
+   memset(&pdcchAllocInfo,0,sizeof(SchPdcchAllocInfo));
    if(findValidK0K1Value(cell, currTime, ueId, ueCb->k0K1TblPrsnt,\
-            &pdschStartSymbol, &pdschNumSymbols, &pdcchTime, &pdschTime, &pucchTime, isRetx, *hqP) != true )
+            &pdschStartSymbol, &pdschNumSymbols, &pdcchTime, &pdschTime, \
+            &pucchTime, isRetx, *hqP, &pdcchAllocInfo) != true )
    {
       /* If a valid combination of slots to scheduled PDCCH, PDSCH and PUCCH is
        * not found, do not perform resource allocation. Return from here. */
@@ -148,7 +151,8 @@ bool schFillBoGrantDlSchedInfo(SchCellCb *cell, SlotTimingInfo currTime, uint8_t
       return false;
 
    /*[Step6]: pdcch and pdsch data is filled */
-   if((schDlRsrcAllocDlMsg(cell, pdschTime, crnti, accumalatedSize, dciSlotAlloc, startPrb, pdschStartSymbol, pdschNumSymbols, isRetx, *hqP)) != ROK)
+   if((schDlRsrcAllocDlMsg(cell, pdschTime, crnti, accumalatedSize, dciSlotAlloc, startPrb,\
+                           pdschStartSymbol, pdschNumSymbols, isRetx, *hqP, pdcchAllocInfo)) != ROK)
    {
       DU_LOG("\nERROR  --> SCH : Scheduling of DL dedicated message failed");
 
@@ -187,7 +191,8 @@ bool schFillBoGrantDlSchedInfo(SchCellCb *cell, SlotTimingInfo currTime, uint8_t
          cell->schDlSlotInfo[pdcchTime.slot]->dlMsgAlloc[ueId-1] = NULLP;
          return false;
       }
-      memcpy(dciSlotAlloc->dlMsgPdschCfg, &dciSlotAlloc->dlMsgPdcchCfg->dci.pdschCfg,  sizeof(PdschCfg));
+      memcpy(dciSlotAlloc->dlMsgPdschCfg,\
+         &dciSlotAlloc->dlMsgPdcchCfg->dci[dciSlotAlloc->dlMsgPdcchCfg->numDlDci - 1].pdschCfg,  sizeof(PdschCfg));
    }
    else
    {
@@ -218,7 +223,8 @@ bool schFillBoGrantDlSchedInfo(SchCellCb *cell, SlotTimingInfo currTime, uint8_t
       SCH_ALLOC(dlMsgAlloc->dlMsgPdschCfg, sizeof(PdschCfg));
       if(dlMsgAlloc->dlMsgPdschCfg)
       {
-         memcpy(dlMsgAlloc->dlMsgPdschCfg, &dciSlotAlloc->dlMsgPdcchCfg->dci.pdschCfg, sizeof(PdschCfg));
+         memcpy(dlMsgAlloc->dlMsgPdschCfg,\
+                &dciSlotAlloc->dlMsgPdcchCfg->dci[dciSlotAlloc->dlMsgPdcchCfg->numDlDci - 1].pdschCfg, sizeof(PdschCfg));
       }
       else
       {
@@ -238,8 +244,6 @@ bool schFillBoGrantDlSchedInfo(SchCellCb *cell, SlotTimingInfo currTime, uint8_t
 
    schAllocPucchResource(cell, pucchTime, crnti, ueCb, isRetx, *hqP);
 
-   cell->schDlSlotInfo[pdcchTime.slot]->pdcchUe = ueId;
-   cell->schDlSlotInfo[pdschTime.slot]->pdschUe = ueId;
    cell->schUlSlotInfo[pucchTime.slot]->pucchUe = ueId;
 
    /*Re-setting the BO's of all DL LCs in this UE*/
@@ -413,7 +417,8 @@ PduTxOccsaion schCheckSib1Occ(SchCellCb *cell, SlotTimingInfo slotTime)
  *******************************************************************/
 bool findValidK0K1Value(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId, bool dedMsg,
                         uint8_t *pdschStartSymbol, uint8_t *pdschSymblLen, SlotTimingInfo *pdcchTime,
-                        SlotTimingInfo *pdschTime, SlotTimingInfo *pucchTime, bool isRetx, SchDlHqProcCb *hqP)
+                        SlotTimingInfo *pdschTime, SlotTimingInfo *pucchTime, bool isRetx, SchDlHqProcCb *hqP,
+                        SchPdcchAllocInfo *pdcchAllocInfo)
 {
    uint8_t numK0 = 0, k0TblIdx = 0, k0Val = 0, k0Index =0 ;
    uint8_t k1TblIdx = 0, k1Index = 0, k1Val = 0, numK1 = 0;
@@ -429,15 +434,15 @@ bool findValidK0K1Value(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId, 
    }
 #endif
 
-   if(cell->schDlSlotInfo[pdcchTime->slot]->pdcchUe != 0)
-   {
-      return false;
-   }
-
    if(dedMsg == true)
    {
       ueCb = &cell->ueCb[ueId-1];
       k0K1InfoTbl = &ueCb->k0K1InfoTbl;
+      if(schDlCandidateSelection(ueCb, *pdcchTime, pdcchAllocInfo) == false)
+      {
+        DU_LOG("\nDEBUG  --> SCH: DL candidate Selection failed bcz PDCCH is unavailable for this slot");
+        return false;     
+      }
    }
    else
    {
@@ -462,6 +467,12 @@ bool findValidK0K1Value(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId, 
             *pdschStartSymbol = ueCb->ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdschCfg.timeDomRsrcAllociList[k0Index].startSymbol;
             *pdschSymblLen = ueCb->ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdschCfg.timeDomRsrcAllociList[k0Index].symbolLength;
          }
+         else
+         {
+            k0Val = cell->cellCfg.dlCfgCommon.schInitialDlBwp.pdschCommon.timeDomRsrcAllocList[k0Index].k0;
+            *pdschStartSymbol = cell->cellCfg.dlCfgCommon.schInitialDlBwp.pdschCommon.timeDomRsrcAllocList[k0Index].startSymbol;
+            *pdschSymblLen = cell->cellCfg.dlCfgCommon.schInitialDlBwp.pdschCommon.timeDomRsrcAllocList[k0Index].lengthSymbol;
+         }
       }
 
       ADD_DELTA_TO_TIME((*pdcchTime), (*pdschTime), k0Val, cell->numSlots);
@@ -471,10 +482,6 @@ bool findValidK0K1Value(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId, 
          continue;
       }
 #endif
-      if(cell->schDlSlotInfo[pdschTime->slot]->pdschUe != 0)
-      {
-         continue; 
-      }
 
       numK1 = k0K1InfoTbl->k0k1TimingInfo[pdcchTime->slot].k0Indexes[k0TblIdx].k1TimingInfo.numK1;
       for(k1TblIdx = 0; k1TblIdx < numK1; k1TblIdx++)
@@ -489,6 +496,10 @@ bool findValidK0K1Value(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId, 
             if(ueCb->ueCfg.spCellCfg.servCellRecfg.initUlBwp.pucchCfg.dlDataToUlAck)
             {
                k1Val = ueCb->ueCfg.spCellCfg.servCellRecfg.initUlBwp.pucchCfg.dlDataToUlAck->dlDataToUlAckList[k1Index];
+            }
+            else
+            {
+               k1Val = defaultUlAckTbl[k1Index];
             }
          }
          ADD_DELTA_TO_TIME((*pdschTime),(*pucchTime), k1Val, cell->numSlots);
@@ -581,8 +592,8 @@ uint8_t schProcDlPageAlloc(SchCellCb *cell, SlotTimingInfo currTime, Inst schIns
       dlPageAlloc.pageDlDci.cceReg.interleaved.interleaverSize = cell->sib1SchCfg.sib1PdcchCfg.coresetCfg.interleaverSize;
       dlPageAlloc.pageDlDci.cceReg.interleaved.shiftIndex = cell->sib1SchCfg.sib1PdcchCfg.coresetCfg.shiftIndex;
       dlPageAlloc.pageDlDci.ssStartSymbolIndex = cell->sib1SchCfg.sib1PdcchCfg.coresetCfg.startSymbolIndex;
-      dlPageAlloc.pageDlDci.cceIndex = cell->sib1SchCfg.sib1PdcchCfg.dci.cceIndex;
-      dlPageAlloc.pageDlDci.aggregLevel = cell->sib1SchCfg.sib1PdcchCfg.dci.aggregLevel;
+      dlPageAlloc.pageDlDci.cceIndex = cell->sib1SchCfg.sib1PdcchCfg.dci[0].cceIndex;
+      dlPageAlloc.pageDlDci.aggregLevel = cell->sib1SchCfg.sib1PdcchCfg.dci[0].aggregLevel;
       dlPageAlloc.pageDlDci.precoderGranularity = cell->sib1SchCfg.sib1PdcchCfg.coresetCfg.precoderGranularity;
       dlPageAlloc.pageDlDci.coreSetSize = cell->sib1SchCfg.sib1PdcchCfg.coresetCfg.coreSetSize;
       /*Fill BWP*/
@@ -759,8 +770,11 @@ uint8_t SchProcSlotInd(Pst *pst, SlotTimingInfo *slotInd)
    while(node)
    {
       dlTotalPrbUsage = (TotalPrbUsage *)node->node;
-      dlTotalPrbUsage->numPrbUsedForTx += cell->schDlSlotInfo[slot]->prbAlloc.numPrbAlloc;
-      dlTotalPrbUsage->totalPrbAvailForTx += MAX_NUM_RB;
+      if(dlTotalPrbUsage)
+      {
+         dlTotalPrbUsage->numPrbUsedForTx += cell->schDlSlotInfo[slot]->prbAlloc.numPrbAlloc;
+         dlTotalPrbUsage->totalPrbAvailForTx += MAX_NUM_RB;
+      }
       node = node->next;
    }
    

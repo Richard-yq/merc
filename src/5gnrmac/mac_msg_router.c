@@ -203,7 +203,22 @@ void MacHdlDuappEvents(Pst *pst, Buffer *mBuf)
          {
             /* Process Statistics Request */
             unpackMacStatsReq(MacProcStatsReq, pst, mBuf);
+            break;
          }
+      
+      case EVENT_MAC_STATS_DELETE_REQ:
+         {
+            /* Process Statistics Delete Request */
+            unpackMacStatsDeleteReq(MacProcStatsDeleteReq, pst, mBuf);
+            break;
+         }
+      case EVENT_MAC_STATISTICS_MODIFY_REQ:
+         {
+            /* Process Statistics modification Request */
+            unpackMacStatsModificationReq(MacProcStatsModificationReq, pst, mBuf);
+            break;
+         }
+
 
       default:
          RG_FREE_MSG(mBuf);
@@ -360,6 +375,12 @@ void callFlowMacActvTsk(Pst *pst)
                case EVENT_MAC_STATISTICS_REQ:
                   strcpy(message,"EVENT_MAC_STATISTICS_REQ");
                   break;
+               case EVENT_MAC_STATS_DELETE_REQ:
+                  strcpy(message,"EVENT_MAC_STATS_DELETE_REQ");
+                  break;
+               case EVENT_MAC_STATISTICS_MODIFY_REQ:
+                  strcpy(message,"EVENT_MAC_STATISTICS_MODIFY_REQ");
+                  break;
                default:
                   strcpy(message,"Invalid Event");
                   break;
@@ -497,6 +518,16 @@ void callFlowMacActvTsk(Pst *pst)
                   case EVENT_STATISTICS_IND_TO_MAC:
                      {
                         strcpy(message,"EVENT_STATISTICS_IND_TO_MAC");
+                        break;
+                     }
+                  case EVENT_STATISTICS_DELETE_RSP_TO_MAC:
+                     {
+                        strcpy(message,"EVENT_STATISTICS_DELETE_RSP_TO_MAC");
+                        break;
+                     }
+                  case EVENT_STATISTICS_MODIFY_RSP_TO_MAC:
+                     {
+                        strcpy(message,"EVENT_STATISTICS_MODIFY_RSP_TO_MAC");
                         break;
                      }
                   default:
@@ -653,6 +684,16 @@ uint8_t MacMessageRouter(Pst *pst, void *msg)
       case EVENT_STATISTICS_IND_TO_MAC:
          {
             MacProcSchStatsInd(pst, (SchStatsInd *)msg);
+            break;
+         }
+      case EVENT_STATISTICS_DELETE_RSP_TO_MAC:
+         {
+            MacProcSchStatsDeleteRsp(pst, (SchStatsDeleteRsp *)msg);
+            break;
+         }
+      case EVENT_STATISTICS_MODIFY_RSP_TO_MAC:
+         {
+            MacProcSchStatsModificationRsp(pst, (SchStatsModificationRsp *)msg);
             break;
          }
       default:

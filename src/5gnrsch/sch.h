@@ -79,6 +79,15 @@
 
 #define SCH_TQ_SIZE 10
 
+/*3GPP 38.331,'frequencyDomainResources' :Number of PRBs per Resource Block Group*/
+#define NUM_PRBS_PER_RBG 6 
+
+/*3GPP 38.214 Table 5.2.2.1-2*/
+#define MAX_NUM_CQI_IDX 16
+
+/*3GPP 38.211 Table 7.3.2.1-1*/
+#define MAX_NUM_AGG_LVL 5
+
 typedef struct schDlHqProcCb SchDlHqProcCb;
 typedef struct schUlHqEnt SchUlHqEnt;
 typedef struct schRaReq SchRaReq;
@@ -305,6 +314,15 @@ typedef struct schPrbAlloc
    uint16_t  numPrbAlloc;
 }SchPrbAlloc;
 
+
+typedef struct schPdcchAllocInfo
+{
+   uint8_t  cRSetId;
+   uint8_t  ssId;
+   uint8_t  aggLvl;
+   uint16_t cceIndex; 
+}SchPdcchAllocInfo;
+
 /**
  * @brief
  * scheduler allocationsfor DL per cell.
@@ -316,8 +334,7 @@ typedef struct schDlSlotInfo
    uint8_t      ssbIdxSupported;          /*!< Max SSB index */
    SsbInfo      ssbInfo[MAX_SSB_IDX];     /*!< SSB info */
    bool         sib1Pres;                 /*!< Flag to determine if SIB1 is present in this slot */
-   uint8_t      pdcchUe;                  /*!< UE for which PDCCH is scheduled in this slot */
-   uint8_t      pdschUe;                  /*!< UE for which PDSCH is scheduled in this slot */
+   uint8_t      pdcchUe;                  /*!< UE for which PDCCH Common is scheduled in this slot */
    RarAlloc     *rarAlloc[MAX_NUM_UE];    /*!< RAR allocation per UE*/
    DciInfo      *ulGrant;
    DlMsgSchInfo *dlMsgAlloc[MAX_NUM_UE];  /*!< Dl msg allocation per UE*/
@@ -462,6 +479,18 @@ typedef struct  schDrxUeCb
    CmLList   *shortCycleTmrExpiryNodeInfo; /* Node present in short cycle exp list*/
 }SchDrxUeCb;
 #endif
+
+typedef struct schPdcchInfo
+{
+   SchControlRsrcSet *cRSetRef; /*Coreset Cfg reference from SchUeCfgCb*/
+   SchSearchSpace    *ssRef;    /*SearchSpace Cfg reference from SchUeCfgCb*/
+   uint16_t          totalPrbs; /*Total PRBs configured for this CORESET*/
+   uint8_t           nrOfPRBPerCce; /*CCE Size*/
+   uint8_t           totalCceCount; /*Count of CCE in this CORESET*/
+   uint8_t           cqiIndxAggLvlMap[MAX_NUM_CQI_IDX];/*Agg Level to be used for each CQI Index*/
+   uint32_t          *y; /*Coefficient variable to calculate CCE Index as per 3gpp Spec 38.213 Sec 10.1*/
+}SchPdcchInfo;
+
 /**
  * @brief
  * UE control block
@@ -494,6 +523,7 @@ typedef struct schUeCb
    SchK0K1TimingInfoTbl k0K1InfoTbl;
    bool                 k2TblPrsnt;
    SchK2TimingInfoTbl   k2InfoTbl;
+   SchPdcchInfo         pdcchInfo[MAX_NUM_CRSET];
 }SchUeCb;
 
 /**
@@ -628,16 +658,9 @@ typedef struct schStatsGrp
    SchKpiSupported kpiStats;
 }SchStatsGrp;
 
-typedef struct schStatsInfo
-{
-   uint8_t     numStatsGroup;
-   SchStatsGrp statsGrpList[MAX_NUM_STATS_GRP];
-}SchStatsInfo;
-
 typedef struct schStatistics
 {
-   uint16_t      numOfStatsCfgd;
-   SchStatsInfo  statsInfoList[MAX_NUM_STATS_CFG];
+   CmLListCp     statsGrpList;
    SchKpiActive  activeKpiList;
 }SchStatistics;
 
@@ -757,15 +780,15 @@ bool schProcessRaReq(Inst schInst, SchCellCb *cellCb, SlotTimingInfo currTime, u
 uint8_t schProcessMsg4Req(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId,bool isRetxMsg4, SchDlHqProcCb **hqP);
 uint8_t schFillRar(SchCellCb *cell, SlotTimingInfo rarTime, uint16_t ueId, RarAlloc *rarAlloc, uint8_t k0Index);
 bool schFillBoGrantDlSchedInfo(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId, bool isRetx, SchDlHqProcCb **hqP);
-uint8_t schDlRsrcAllocDlMsg(SchCellCb *cell, SlotTimingInfo slotTime, uint16_t crnti,
-uint32_t tbSize, DlMsgSchInfo *dlMsgAlloc, uint16_t startPRB, uint8_t pdschStartSymbol, uint8_t pdschNumSymbols,bool isRetx, SchDlHqProcCb* hqP);
+uint8_t schDlRsrcAllocDlMsg(SchCellCb *cell, SlotTimingInfo slotTime, uint16_t crnti, uint32_t tbSize, DlMsgSchInfo *dlMsgAlloc,\
+   uint16_t startPRB, uint8_t pdschStartSymbol, uint8_t pdschNumSymbols,bool isRetx, SchDlHqProcCb* hqP, SchPdcchAllocInfo pdcchAllocInfo);
 uint8_t schDlRsrcAllocMsg4(SchCellCb *cell, SlotTimingInfo msg4Time, uint8_t ueId, DlMsgSchInfo *msg4Alloc,\
 uint8_t pdschStartSymbol, uint8_t pdschNumSymbols, bool isRetx, SchDlHqProcCb *hqP);
 uint8_t allocatePrbDl(SchCellCb *cell, SlotTimingInfo slotTime, uint8_t startSymbol, uint8_t symbolLength, \
    uint16_t *startPrb, uint16_t numPrb);
 void fillDlMsgInfo(DlMsgSchInfo *dlMsgInfo, uint16_t crnti, bool isRetx, SchDlHqProcCb* hqP); /*AS per 38.473 V15.3.0, Section 9.3.1.32 crnti value range is b/w 0..65535*/
-bool findValidK0K1Value(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId, bool dedMsg, uint8_t *pdschStartSymbol,\
-uint8_t *pdschSymblLen, SlotTimingInfo *pdcchTime,  SlotTimingInfo *pdschTime, SlotTimingInfo *pucchTime, bool isRetx, SchDlHqProcCb *hqP);
+bool findValidK0K1Value(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId, bool dedMsg, uint8_t *pdschStartSymbol, uint8_t *pdschSymblLen,\
+        SlotTimingInfo *pdcchTime,  SlotTimingInfo *pdschTime, SlotTimingInfo *pucchTime, bool isRetx, SchDlHqProcCb *hqP, SchPdcchAllocInfo *pdcchAllocInfo);
 RaRspWindowStatus isInRaRspWindow(SchRaReq *raReq, SlotTimingInfo frameToCheck, uint16_t numSlotsPerSystemFrame);
 
 /* UL scheduling related function declarations */
@@ -788,6 +811,8 @@ LcInfo* handleLcLList(CmLListCp *lcLL, uint8_t lcId, ActionTypeLL action);
 void prbAllocUsingRRMPolicy(CmLListCp *lcLL, bool dedicatedPRB, uint16_t mcsIdx,uint8_t numSymbols,\
                       uint16_t *sharedPRB, uint16_t *reservedPRB, bool *isTxPayloadLenAdded, bool *srRcvd);
 void updateBsrAndLcList(CmLListCp *lcLL, BsrInfo *bsrInfo, uint8_t status);
+uint8_t fillUeCoresetAndSsInfo(SchUeCb *ue);
+bool schDlCandidateSelection(SchUeCb *ue,  SlotTimingInfo slotTime, SchPdcchAllocInfo *pdcchAllocInfo);
 
 /*Paging Functions*/
 void schProcPagingCfg(SchCellCb *cell);
@@ -824,7 +849,9 @@ void schMsg4Complete(SchUeCb *ueCb);
 uint8_t SchProcStatsReq(Pst *pst, SchStatsReq *statsReq);
 uint8_t SchSendStatsIndToMac(Inst inst, SchStatsInd  *statsInd);
 uint8_t schCalcAndSendGrpStats(SchStatsGrp *grpInfo);
-
+uint8_t SchProcStatsDeleteReq(Pst *pst, SchStatsDeleteReq *statsDeleteReq);
+uint8_t SchProcStatsModificationReq(Pst *pst, SchStatsModificationReq *statsModificationReq);
+void deleteStatsGrpInfo(Inst inst, SchStatsGrp *statsGrpInfo);
 /**********************************************************************
   End of file
  **********************************************************************/

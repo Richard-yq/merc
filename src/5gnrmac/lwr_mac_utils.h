@@ -64,6 +64,7 @@
    _pst.intfVer = 0;                                        \
 }
  
+void convertFreqDomRsrcMapToIAPIFormat(uint8_t *sourceBitMap, uint8_t *destBitMap);
 /**********************************************************************
          End of file
 **********************************************************************/

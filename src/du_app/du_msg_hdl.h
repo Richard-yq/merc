@@ -16,13 +16,20 @@
 ################################################################################
 *******************************************************************************/
 
-#define DU_TIMER_RESOLUTION 1
-#define DU_TQ_SIZE 2
 
-short int duActvTmr(Ent ent,Inst inst); 
-bool duChkTmr(PTR cb, int16_t tmrEvnt);
-void duStartTmr(PTR cb, int16_t tmrEvnt, uint32_t timerValue);
-void duStopTmr(PTR cb, uint8_t tmrType);
+uint8_t packRlcConfigReq(Pst *pst, RlcMngmt *cfg);
+uint8_t cmPkLkwCntrlReq(Pst *pst, RlcMngmt *cfg);
+uint8_t cmPkLrgCfgReq(Pst *pst, RgMngmt *cfg);
+uint8_t egtpHdlDatInd(EgtpMsg egtpMsg);
+uint8_t BuildAndSendDUConfigUpdate();
+uint16_t getTransId();
+uint8_t cmPkLrgSchCfgReq(Pst * pst,RgMngmt * cfg);
+uint8_t sendCellDeleteReqToMac(uint16_t cellId);
+uint8_t BuildAndSendStatsDeleteReq(RicSubscription *ricSubscriptionInfo, bool deleteAllStats);
+uint8_t BuildAndSendStatsModificationReqToMac(RicSubscription *ricSubscriptionInfo);
+uint8_t BuildAndSendStatsModificationReq(RicSubscription *ricSubscriptionInfo);
+
+
 /**********************************************************************
   End of file
  **********************************************************************/

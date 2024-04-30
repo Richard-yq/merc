@@ -41,7 +41,7 @@
 #include "legtp.h"
 #include "du_utils.h"
 #include "du_cell_mgr.h" 
-
+#include "du_msg_hdl.h"
 
 #ifdef O1_ENABLE
 
@@ -57,16 +57,6 @@ uint8_t rlcUlCfg = 0;
 uint8_t numRlcMacSaps = 0;
 uint8_t macCfg = 0;
 uint8_t macCfgInst = 0;
-
-DuCfgParams duCfgParam;
-uint8_t packRlcConfigReq(Pst *pst, RlcMngmt *cfg);
-uint8_t cmPkLkwCntrlReq(Pst *pst, RlcMngmt *cfg);
-uint8_t cmPkLrgCfgReq(Pst *pst, RgMngmt *cfg);
-uint8_t egtpHdlDatInd(EgtpMsg egtpMsg);
-uint8_t BuildAndSendDUConfigUpdate();
-uint16_t getTransId();
-uint8_t cmPkLrgSchCfgReq(Pst * pst,RgMngmt * cfg);
-uint8_t sendCellDeleteReqToMac(uint16_t cellId);
 
 packMacCellCfgReq packMacCellCfgOpts[] =
 {
@@ -121,6 +111,19 @@ packMacVnfCfgReq packMacVnfCfgOpts[] =
 };
 #endif
 /* ======================================== */
+DuMacStatsDeleteReqFunc packMacStatsDeleteReqOpts[]=
+{
+   packDuMacStatsDeleteReq,          /* Loose Coupling */
+   MacProcStatsDeleteReq,            /* Tight Coupling */
+   packDuMacStatsDeleteReq           /* Light weight-loose coupling */
+};
+
+DuMacStatsModificationReqFunc packMacStatsModificationReqOpts[]=
+{
+   packDuMacStatsModificationReq,          /* Loose Coupling */
+   MacProcStatsModificationReq,            /* Tight Coupling */
+   packDuMacStatsModificationReq           /* Light weight-loose coupling */
+};
 
 /**************************************************************************
  * @brief Function to fill configs required by RLC
@@ -2317,6 +2320,301 @@ uint8_t DuProcMacStatsInd(Pst *pst, MacStatsInd *statsInd)
    else
    {
       DU_LOG("\nINFO  -->  DU_APP : DuProcMacStatsInd: Received NULL Pointer");
+   }
+   return ret;
+}
+
+/*******************************************************************
+ *
+ * @brief Process statistics delete response from MAC
+ *
+ * @details
+ *
+ *    Function : DuProcMacStatsDeleteRsp
+ *
+ *    Functionality: Processes statistics delete response
+ *       from MAC. 
+ 
+ * @params[in]
+ *    Pst Information
+ *    Mac stats delete rsp
+ *
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+
+uint8_t DuProcMacStatsDeleteRsp(Pst *pst, MacStatsDeleteRsp *statsDeleteRsp)
+{
+   uint8_t ret = RFAILED;
+   DU_LOG("\nINFO  -->  DU_APP : DuProcMacStatsDeleteRsp: Received Statistics Response from MAC");
+
+   if(statsDeleteRsp)
+   {
+      /* numStatsGroup == 0, received a response for complete ric
+       * subscription deletion else, received a response 
+       * for RIC_SUBS_MOD_REQ's actionToBeDeleted*/
+      if(statsDeleteRsp->numStatsGroupDeleted ==0)
+      {
+         if((ret = e2ProcStatsDeleteRsp(statsDeleteRsp)) != ROK)
+         {
+            DU_LOG("\nINFO  -->  DU_APP : Failed in %s at line %d", __func__, __LINE__);
+         }
+      }
+      else
+      {
+         if((ret = e2ProcActionDeleteRsp(statsDeleteRsp)) != ROK)
+         {
+            DU_LOG("\nINFO  -->  DU_APP : Failed in %s at line %d", __func__, __LINE__);
+         }
+      }
+      DU_FREE_SHRABL_BUF(pst->region, pst->pool, statsDeleteRsp, sizeof(MacStatsDeleteRsp));
+   }
+   else
+   {
+      DU_LOG("\nERROR  -->  DU_APP : DuProcMacStatsDeleteRsp: Received NULL Pointer");
+   }
+   return ret;
+}
+
+/*******************************************************************
+ *
+ * @brief Send Statistics delete req to MAC
+ *
+ * @details
+ *
+ *    Function : BuildAndSendStatsDeleteReqToMac()
+ *
+ *    Functionality: Send Statistics delete req To Mac
+ *
+ * @params[in]
+ *     Subscription Info
+ *     delete All Stats
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+uint8_t BuildAndSendStatsDeleteReqToMac(RicSubscription *ricSubscriptionInfo, bool deleteAllStats)
+{
+   Pst pst;
+   uint8_t actionIdx=0;
+   CmLList *actionNode=NULLP;
+   ActionInfo *actionDb = NULLP;
+   E2FailureCause failureCause;
+   MacStatsDeleteReq *macStatsDelete = NULLP;
+
+   /* Fill MAC statistics delete */
+   DU_ALLOC_SHRABL_BUF(macStatsDelete, sizeof(MacStatsDeleteReq));
+   if(macStatsDelete == NULLP)
+   {
+      DU_LOG("\nERROR  -->  DU_APP : Memory allocation failed for macStatsDelete in BuildAndSendStatsDeleteReqToMac");
+      failureCause.causeType = E2_MISCELLANEOUS;
+      failureCause.cause = E2_MISCELLANEOUS_CAUSE_UNSPECIFIED;
+
+      if(BuildAndSendRicSubscriptionDeleteFailure(ricSubscriptionInfo->ranFuncId, ricSubscriptionInfo->requestId, failureCause) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : e2ProcStatsDeleteRsp: failed to build and send ric subs delete failure");
+         return RFAILED;
+      }
+      return RFAILED;
+   }
+   
+   memset(macStatsDelete, 0, sizeof(MacStatsDeleteReq));
+   /* Generate subscription ID using RIC Request ID and RAN Function ID */
+   encodeSubscriptionId(&macStatsDelete->subscriptionId, ricSubscriptionInfo->ranFuncId, ricSubscriptionInfo->requestId);
+
+   /* If deleteAllStats is true, then we don't need to fill in the
+    * statsGrpIdToBeDelList with action details; otherwise, we must fill in the
+    * statsGrpIdToBeDelList with action-related data that is set to CONFIG_DEL.*/
+   if(!deleteAllStats)
+   {
+      actionIdx=0;
+      CM_LLIST_FIRST_NODE(&ricSubscriptionInfo->actionSequence, actionNode);
+      while(actionNode)
+      {
+         actionDb = (ActionInfo*)(actionNode->node);
+         if(actionDb->action == CONFIG_DEL)
+         {
+            macStatsDelete->statsGrpIdToBeDelList[actionIdx] = actionDb->actionId;
+            actionIdx++;
+         }
+         actionNode= actionNode->next;
+      }
+      macStatsDelete->numStatsGroupToBeDeleted=actionIdx;
+   }
+
+   DU_LOG("\nDEBUG  -->  DU_APP: Sending Statistics delete req to MAC ");
+   FILL_PST_DUAPP_TO_MAC(pst, EVENT_MAC_STATS_DELETE_REQ);
+   
+   if( (*packMacStatsDeleteReqOpts[pst.selector])(&pst, macStatsDelete) != ROK)
+   { 
+      DU_LOG("\nERROR  -->  DU_APP: Failed to send Statistics delete req to MAC");
+      DU_FREE_SHRABL_BUF(DU_APP_MEM_REGION, DU_POOL, macStatsDelete, sizeof(MacStatsDeleteReq));
+      return RFAILED;
+   }
+   
+  return ROK;  
+}
+
+
+/*******************************************************************
+ *
+ * @brief Statistics delete to DU layers
+ *
+ * @details
+ *
+ *    Function : BuildAndSendStatsDeleteReq()
+ *
+ *    Functionality:  Statistics delete to DU layers
+ *
+ * @params[in] 
+ *     Subscription Info
+ *     delete All Stats
+ *
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+uint8_t BuildAndSendStatsDeleteReq(RicSubscription *ricSubscriptionInfo, bool deleteAllStats)
+{
+   /* Build and sent subscription information to MAC in Statistics delete */
+   if(BuildAndSendStatsDeleteReqToMac(ricSubscriptionInfo, deleteAllStats) != ROK)
+   {
+      DU_LOG("\nERROR  -->  DU_APP : Failed at BuildAndSendStatsDeleteReqToMac()");
+      return RFAILED;
+   }
+   return ROK;
+}
+
+ /*******************************************************************
+ *
+ * @brief Send Statistics Modification request to MAC
+ *
+ * @details
+ *
+ *    Function : BuildAndSendStatsModificationReqToMac()
+ *
+ *    Functionality: Send Statistics Modification Request To Mac
+ *
+ * @params[in] Ric subscription info
+ *
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+uint8_t BuildAndSendStatsModificationReqToMac(RicSubscription *ricSubscriptionInfo)
+{
+   Pst pst;
+   MacStatsModificationReq *macStatsModificationReq = NULLP;
+
+   /* Fill MAC statistics modification request */
+   DU_ALLOC_SHRABL_BUF(macStatsModificationReq, sizeof(MacStatsModificationReq));
+   if(macStatsModificationReq == NULLP)
+   {
+      DU_LOG("\nERROR  -->  DU_APP : Memory allocation failed for macStatsModificationReq in BuildAndSendStatsModificationReqToMac");
+      return RFAILED;
+   }
+
+   /* Fill E2 Subscription Info in MAC Statistics Modification Request and send to MAC */
+   if(fillRicSubsInMacStatsModificationReq(macStatsModificationReq, ricSubscriptionInfo) == ROK)
+   {
+      DU_LOG("\nDEBUG  -->  DU_APP: Sending Statistics Modification Request to MAC ");
+      FILL_PST_DUAPP_TO_MAC(pst, EVENT_MAC_STATISTICS_MODIFY_REQ);
+
+      if( (*packMacStatsModificationReqOpts[pst.selector])(&pst, macStatsModificationReq) == ROK)
+         return ROK;
+
+      DU_LOG("\nERROR  -->  DU_APP: Failed to send Statistics Modification Request to MAC");
+   }
+
+   DU_LOG("\nERROR  -->  DU_APP: No Statistics group found valid. Hence statistics Modification request is not sent to MAC");
+   DU_FREE_SHRABL_BUF(DU_APP_MEM_REGION, DU_POOL, macStatsModificationReq, sizeof(MacStatsModificationReq));
+   return RFAILED;
+}
+
+/*******************************************************************
+ *
+ * @brief Send Statistics Modification request to DU layers
+ *
+ * @details
+ *
+ *    Function : BuildAndSendStatsModificationReq()
+ *
+ *    Functionality: Check if there is an update in statistics
+ *       reporting configuration. If so, send the update Modification to
+ *       respective layer.
+ *
+ * @params[in] Subscription Info
+ *
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+uint8_t BuildAndSendStatsModificationReq(RicSubscription *ricSubscriptionInfo)
+{
+   /* Build and sent subscription information to MAC in Statistics Modification Request */
+   if(BuildAndSendStatsModificationReqToMac(ricSubscriptionInfo) != ROK)
+   {
+      DU_LOG("\nERROR  -->  DU_APP : Failed at BuildAndSendStatsModificationReqToMac()");
+      return RFAILED;
+   }
+
+   return ROK;
+}
+
+/*******************************************************************
+ *
+ * @brief Process statistics modification response from MAC
+ *
+ * @details
+ *
+ *    Function : DuProcMacStatsModificationRsp
+ *
+ *    Functionality: Processes statistics modification configuration 
+ *       response from MAC. If configuration is succsessful, DUAPP starts
+ *       reporting period timer for this subscription request
+ *       from RIC
+ *
+ * @params[in]
+ *    PST structure
+ *    MAC stats modification rsp
+ *
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+uint8_t DuProcMacStatsModificationRsp(Pst *pst, MacStatsModificationRsp *statsModificationRsp)
+{
+   uint8_t ret = RFAILED;
+   DU_LOG("\nINFO  -->  DU_APP : DuProcMacStatsModificationRsp: Received Statistics Modification Response from MAC");
+
+   if(statsModificationRsp)
+   {
+#ifdef DEBUG_PRINT
+      uint8_t idx = 0;
+      DU_LOG("\n  Subscription Id [%ld]", statsModificationRsp->subscriptionId);
+
+      DU_LOG("\n  Number of Accepted Groups [%d]", statsModificationRsp->numGrpAccepted);
+      for(idx=0; idx<statsModificationRsp->numGrpAccepted; idx++)
+      {
+         DU_LOG("\n    Group Id [%d]", statsModificationRsp->statsGrpAcceptedList[idx]);
+      }
+
+      DU_LOG("\n  Number of Rejected Groups [%d]", statsModificationRsp->numGrpRejected);
+      for(idx=0; idx<statsModificationRsp->numGrpRejected; idx++)
+      {
+         DU_LOG("\n    Group Id [%d]", statsModificationRsp->statsGrpRejectedList[idx].groupId);
+      }
+#endif
+      if((ret = e2ProcStatsModificationRsp(statsModificationRsp)) != ROK)
+      {
+         DU_LOG("\nERROR  -->  DU_APP : DuProcMacStatsModificationRsp: Failed in %s at line %d", __func__, __LINE__);
+      }
+      DU_FREE_SHRABL_BUF(pst->region, pst->pool, statsModificationRsp, sizeof(MacStatsModificationRsp));
+   }
+   else
+   {
+      DU_LOG("\nERROR  -->  DU_APP : DuProcMacStatsModificationRsp: Received NULL Pointer");
    }
    return ret;
 }

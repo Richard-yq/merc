@@ -223,7 +223,7 @@ typedef struct
 typedef struct e2NodeCfgItem
 {
    InterfaceType interface;
-   ComponentActionType actionType;
+   uint64_t      componentId; 
 }E2NodeConfigItem;
 
 typedef struct e2NodeCfgList
@@ -400,9 +400,10 @@ typedef struct
    RicRequestId           requestId;
    uint16_t               ranFuncId;
    EventTriggerDefinition eventTriggerDefinition;
-   uint8_t                numOfActions;
-   ActionInfo             actionSequence[MAX_RIC_ACTION];  
+   CmLListCp              actionSequence; 
    CmTimer                ricSubsReportTimer;
+   ConfigType             action;
+   E2FailureCause         failureCause; /* Used only when a subscription is required to be deleted */
 }RicSubscription;
 
 typedef struct rejectedAction
@@ -421,6 +422,26 @@ typedef struct pendingSubsRspInfo
    RejectedAction  rejectedActionList[MAX_RIC_ACTION];
 }PendingSubsRspInfo;
 
+typedef struct actionStatus
+{
+   uint8_t         numOfAcceptedActions;
+   uint8_t         acceptedActionList[MAX_RIC_ACTION];
+   uint8_t         numOfRejectedActions;
+   RejectedAction  rejectedActionList[MAX_RIC_ACTION];
+}ActionStatus;
+
+typedef struct pendingSubsModRspInfo 
+{
+   RicRequestId requestId;
+   uint16_t     ranFuncId;
+   bool         addActionCompleted;
+   ActionStatus addActionStatus;
+   bool         modActionCompleted;
+   ActionStatus modActionStatus;
+   bool         removeActionCompleted;
+   ActionStatus removeActionStatus;
+}PendingSubsModRspInfo;
+
 typedef struct
 {
    /* O-RAN.WG3.E2SM-KPM-R003-v03.00 : Section 8.2.2.1 */
@@ -437,18 +458,26 @@ typedef struct
    CmLListCp        subscriptionList;
    uint8_t          numPendingSubsRsp;
    PendingSubsRspInfo pendingSubsRspInfo[MAX_PENDING_SUBSCRIPTION_RSP];
+   uint8_t            numPendingSubsModRsp;
+   PendingSubsModRspInfo pendingSubsModRspInfo[MAX_PENDING_SUBSCRIPTION_RSP];
 }RanFunction;
 
 /* O-RAN.WG3.E2AP-R003-v03.00 : Section 9.2.26-9.2.27 */
 typedef struct
 {
-   InterfaceType        interfaceType;
-   uint64_t             componentId; 
-   ComponentActionType  componentActionType;
-   uint8_t              reqBufSize;
-   uint8_t              *componentRequestPart;
-   uint8_t              rspBufSize;
-   uint8_t              *componentResponsePart;
+   uint8_t    reqBufSize;
+   uint8_t    *componentRequestPart;
+   uint8_t    rspBufSize;
+   uint8_t    *componentResponsePart;
+}E2NodeConfig;
+
+typedef struct
+{
+   InterfaceType interfaceType;
+   uint64_t      componentId; 
+   E2NodeConfig  *addConfiguration;
+   E2NodeConfig  *updateConfiguration;
+   bool          deleteConfiguration;
 }E2NodeComponent;
 
 /* O-RAN.WG3.E2AP-R003-v03.00 : Section 9.2.29 */
@@ -487,12 +516,27 @@ typedef struct
    E2TimersInfo     e2TimersInfo;
 }E2apDb;
 
+typedef struct e2ConnectionItem
+{
+   uint32_t    ipV4Addr;
+   AssocUsage  usage;
+}E2ConnectionItem;
+
+typedef struct e2ConnectionList
+{
+   uint8_t numOfE2ConnectionSetup;
+   E2ConnectionItem setupE2Connection[MAX_TNL_ASSOCIATION];
+   uint8_t numOfE2ConnectionFailedToSetup;
+   E2ConnectionItem failedToSetupE2Connection[MAX_TNL_ASSOCIATION];
+}E2ConnectionList;
+
 uint8_t assignTransactionId();
-ActionInfo *fetchActionInfoFromActionId(uint8_t actionId, RicSubscription *ricSubscriptionInfo);
+ActionInfo *fetchActionInfoFromActionId(uint8_t actionId, RicSubscription *ricSubscriptionInfo, CmLList ** actionNode, ConfigType configType);
 RicSubscription *fetchSubsInfoFromRicReqId(RicRequestId ricReqId, RanFunction *ranFuncDb, CmLList **ricSubscriptionNode);
 RanFunction *fetchRanFuncFromRanFuncId(uint16_t ranFuncId);
 uint8_t fetchSubsInfoFromSubsId(uint64_t subscriptionId, RanFunction **ranFuncDb, CmLList **ricSubscriptionNode, \
    RicSubscription **ricSubscriptionInfo);
+void fetchRicSubsToBeDeleted(CmLListCp *ricSubsToBeDelList);
 
 uint8_t fillRicSubsInMacStatsReq(MacStatsReq *macStatsReq, RicSubscription* ricSubscriptionInfo);
 uint8_t e2ProcStatsRsp(MacStatsRsp *statsRsp);
@@ -501,8 +545,21 @@ void E2apHdlRicSubsReportTmrExp(RicSubscription *ricSubscription);
 
 uint8_t ResetE2Request(E2ProcedureDirection dir, E2FailureCause resetCause);
 uint8_t SendE2APMsg(Region region, Pool pool, char *encBuf, int encBufSize);
-E2NodeComponent *fetchE2NodeComponentInfo(InterfaceType interfaceType, uint8_t componentActionType, CmLList **e2ComponentNode);
-uint8_t addOrModifyE2NodeComponent(InterfaceType interfaceType, uint8_t action, bool reqPart, uint8_t bufSize, char *bufString);
+E2NodeComponent *fetchE2NodeComponentInfo(InterfaceType interfaceType, uint64_t componentId, CmLList **e2ComponentNode);
+uint8_t fillE2NodeComponentReqInfo(InterfaceType interfaceType, uint64_t componentId, uint8_t action, uint8_t bufSize, char *bufString);
+uint8_t fillE2NodeComponentRspInfo(InterfaceType interfaceType, uint64_t componentId, uint8_t action, uint8_t bufSize, char *bufString);
+void deleteRicSubscriptionList(CmLListCp *subscriptionList);
+void deleteRicSubscriptionNode(CmLList *ricSubscriptionInfo);
+void deleteMeasurementInfoList(CmLListCp *measInfoList);
+void deleteActionSequence(CmLList *action);
+void deleteMeasuredValueList(CmLListCp *measuredValueList);
+void removeE2NodeInformation();
+void encodeSubscriptionId(uint64_t *subscriptionId, uint16_t ranFuncId, RicRequestId ricReqId);
+uint8_t e2ProcStatsDeleteRsp(MacStatsDeleteRsp *statsDeleteRsp);
+uint8_t fillRicSubsInMacStatsModificationReq(MacStatsModificationReq *macStatsModReq, RicSubscription* ricSubscriptionInfo);
+uint8_t e2ProcActionDeleteRsp(MacStatsDeleteRsp *statsDeleteRsp);
+uint8_t e2ProcStatsModificationRsp(MacStatsModificationRsp *statsModificationRsp);
+uint8_t duProcPendingSubsModRsp(RicSubscription *ricSubscriptionInfo, PendingSubsModRspInfo *pendingSubsModRsp);
 
 /**********************************************************************
   End of file

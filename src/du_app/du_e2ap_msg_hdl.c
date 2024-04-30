@@ -26,8 +26,10 @@
 #include "du_e2ap_mgr.h"
 #include "du_e2ap_msg_hdl.h"
 #include "du_cfg.h"
+#include "du_sctp.h"
 #include "du_mgr.h"
 #include "du_mgr_main.h"
+#include "du_msg_hdl.h"
 #include "du_utils.h"
 #include "GlobalE2node-gNB-ID.h"
 #include "ProtocolIE-FieldE2.h"
@@ -115,6 +117,471 @@ void fillE2Cause(CauseE2_t *e2Cause, E2FailureCause failureCause)
       default:
          break;
    }
+}
+
+/*******************************************************************
+ *
+ * @brief Printing Type and Cause of failure
+ *
+ * @details
+ *
+ *    Function : printE2ErrorCause
+ *
+ *    Functionality: Printing Type and Cause of failure
+ *
+ * @params[in] E2 Cause
+ * @return void
+ *
+ ******************************************************************/
+void printE2ErrorCause(CauseE2_t *cause)
+{
+   switch(cause->present)
+   {
+      case CauseE2_PR_ricRequest:
+         {
+            DU_LOG("Failure_Type [%s] Cause [%ld]", "RIC_Request", cause->choice.ricRequest);
+            break;
+         }
+      case CauseE2_PR_ricService:
+         {
+            DU_LOG("Failure_Type [%s] Cause [%ld]", "RIC_Service", cause->choice.ricService);
+            break;
+         }
+      case CauseE2_PR_e2Node:
+         {
+            DU_LOG("Failure_Type [%s] Cause [%ld]", "E2_Node", cause->choice.e2Node);
+            break;
+         }
+      case CauseE2_PR_transport:
+         {
+            DU_LOG("Failure_Type [%s] Cause [%ld]", "Transport", cause->choice.transport);
+            break;
+         }
+      case CauseE2_PR_protocol:
+         {
+            DU_LOG("Failure_Type [%s] Cause [%ld]", "Protocol", cause->choice.protocol);
+            break;
+         }
+      case CauseE2_PR_misc:
+         {
+            DU_LOG("Failure_Type [%s] Cause [%ld]", "Miscellaneous", cause->choice.misc);
+            break;
+         }
+      default:
+         {
+            DU_LOG("Failure_Type and Cause unknown");
+            break;
+         }
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Deallocate the memory allocated for E2 Removal Failure
+ *
+ * @details
+ *
+ *    Function : FreeE2RemovalFailure
+ *
+ *    Functionality:
+ *       - freeing the memory allocated for E2RemovalFailure
+ *
+ * @params[in] E2AP_PDU_t *e2apMsg
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+void FreeE2RemovalFailure(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx =0;
+   E2RemovalFailure_t *e2RemovalFailure=NULLP;
+
+   if(e2apMsg != NULLP)
+   {
+      if(e2apMsg->choice.unsuccessfulOutcome != NULLP)
+      {
+         e2RemovalFailure = &e2apMsg->choice.unsuccessfulOutcome->value.choice.E2RemovalFailure;
+         if(e2RemovalFailure->protocolIEs.list.array)
+         {
+            for(ieIdx=0; ieIdx < e2RemovalFailure->protocolIEs.list.count; ieIdx++)
+            {
+               if(e2RemovalFailure->protocolIEs.list.array[ieIdx])
+               {
+                  DU_FREE(e2RemovalFailure->protocolIEs.list.array[ieIdx], sizeof(E2RemovalFailureIEs_t));
+               }
+            }
+            DU_FREE(e2RemovalFailure->protocolIEs.list.array, e2RemovalFailure->protocolIEs.list.size);
+         }
+         DU_FREE(e2apMsg->choice.unsuccessfulOutcome, sizeof(UnsuccessfulOutcomeE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Buld and send the E2 Removal Failure msg
+ *
+ * @details
+ *
+ *    Function : BuildAndSendE2RemovalFailure
+ *
+ *    Functionality:
+ *         - Buld and send the E2 Removal Failure Message
+ * @params[in] Trans Id 
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+
+uint8_t BuildAndSendRemovalFailure(uint16_t transId, E2FailureCause failureCause)
+{
+   uint8_t           ieIdx = 0, elementCnt = 0;
+   uint8_t           ret = RFAILED;
+   E2AP_PDU_t        *e2apMsg = NULLP;
+   E2RemovalFailure_t *e2RemovalFailure=NULLP;
+   asn_enc_rval_t    encRetVal;       /* Encoder return value */
+
+   DU_LOG("\nINFO   -->  E2AP : Building E2 Removal Failure Message\n");
+   do
+   {
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+      e2apMsg->present = E2AP_PDU_PR_unsuccessfulOutcome;
+
+      DU_ALLOC(e2apMsg->choice.unsuccessfulOutcome, sizeof(UnsuccessfulOutcomeE2_t));
+      if(e2apMsg->choice.unsuccessfulOutcome == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->choice.unsuccessfulOutcome->procedureCode = ProcedureCodeE2_id_E2removal;
+      e2apMsg->choice.unsuccessfulOutcome->criticality = CriticalityE2_reject;
+      e2apMsg->choice.unsuccessfulOutcome->value.present = UnsuccessfulOutcomeE2__value_PR_E2RemovalFailure;
+      e2RemovalFailure = &e2apMsg->choice.unsuccessfulOutcome->value.choice.E2RemovalFailure;
+
+      elementCnt = 2;
+      e2RemovalFailure->protocolIEs.list.count = elementCnt;
+      e2RemovalFailure->protocolIEs.list.size = elementCnt * sizeof(E2RemovalFailureIEs_t *);
+      DU_ALLOC(e2RemovalFailure->protocolIEs.list.array, e2RemovalFailure->protocolIEs.list.size);
+      if(!e2RemovalFailure->protocolIEs.list.array)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      for(ieIdx=0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(e2RemovalFailure->protocolIEs.list.array[ieIdx], sizeof(E2RemovalFailureIEs_t));
+         if(!e2RemovalFailure->protocolIEs.list.array[ieIdx])
+         {
+            DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+            break;
+         }
+      }
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      e2RemovalFailure->protocolIEs.list.array[ieIdx]->id =  ProtocolIE_IDE2_id_TransactionID;
+      e2RemovalFailure->protocolIEs.list.array[ieIdx]->criticality = CriticalityE2_reject;
+      e2RemovalFailure->protocolIEs.list.array[ieIdx]->value.present = E2RemovalFailureIEs__value_PR_TransactionID;
+      e2RemovalFailure->protocolIEs.list.array[ieIdx]->value.choice.TransactionID = transId;
+
+      /* Cause */
+      ieIdx++;
+      e2RemovalFailure->protocolIEs.list.array[ieIdx]->id = ProtocolIE_IDE2_id_CauseE2;
+      e2RemovalFailure->protocolIEs.list.array[ieIdx]->criticality = CriticalityE2_ignore;
+      e2RemovalFailure->protocolIEs.list.array[ieIdx]->value.present = ErrorIndicationE2_IEs__value_PR_CauseE2;
+      fillE2Cause(&e2RemovalFailure->protocolIEs.list.array[ieIdx]->value.choice.CauseE2, failureCause);
+      
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf, encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode E2 removal failure structure (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : Created APER encoded buffer for E2 Removal Failure \n");
+         for(int i=0; i< encBufSize; i++)
+         {
+            DU_LOG("%x",encBuf[i]);
+         }
+      }
+
+      /* Sending msg */
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Failed to send E2 Removal Failure");
+         break;
+      }
+
+      ret = ROK;
+      break;
+   }while(true);
+
+   FreeE2RemovalFailure(e2apMsg);
+   return ret;
+}
+
+/*******************************************************************
+ *
+ * @brief Deallocate the memory allocated for E2 Removal Response
+ *
+ * @details
+ *
+ *    Function : FreeE2RemovalResponse
+ *
+ *    Functionality:
+ *       - freeing the memory allocated for E2RemovalResponse
+ *
+ * @params[in] E2AP_PDU_t *e2apMsg
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+void FreeE2RemovalResponse(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx =0;
+   E2RemovalResponse_t *e2RemovalResponse=NULLP;
+
+   if(e2apMsg != NULLP)
+   {
+      if(e2apMsg->choice.successfulOutcome != NULLP)
+      {
+         e2RemovalResponse = &e2apMsg->choice.successfulOutcome->value.choice.E2RemovalResponse;
+         if(e2RemovalResponse->protocolIEs.list.array)
+         {
+            for(ieIdx=0; ieIdx < e2RemovalResponse->protocolIEs.list.count; ieIdx++)
+            {
+               if(e2RemovalResponse->protocolIEs.list.array[ieIdx])
+               {
+                  DU_FREE(e2RemovalResponse->protocolIEs.list.array[ieIdx], sizeof(E2RemovalResponseIEs_t));
+               }
+            }
+            DU_FREE(e2RemovalResponse->protocolIEs.list.array, e2RemovalResponse->protocolIEs.list.size);
+         }
+         DU_FREE(e2apMsg->choice.successfulOutcome, sizeof(SuccessfulOutcomeE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Buld and send the E2 Removal Response msg
+ *
+ * @details
+ *
+ *    Function : BuildAndSendE2RemovalResponse
+ *
+ *    Functionality:
+ *         - Buld and send the E2 Removal Response Message
+ * @params[in] Trans Id 
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+uint8_t BuildAndSendRemovalResponse(uint16_t transId)
+{
+   uint8_t           ieIdx = 0, elementCnt = 0;
+   uint8_t           ret = RFAILED;
+   E2AP_PDU_t        *e2apMsg = NULLP;
+   E2RemovalResponse_t *e2RemovalResponse=NULLP;
+   asn_enc_rval_t    encRetVal;       /* Encoder return value */
+
+   DU_LOG("\nINFO   -->  E2AP : Building E2 Removal Response Message\n");
+   do
+   {
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+      e2apMsg->present = E2AP_PDU_PR_successfulOutcome;
+
+      DU_ALLOC(e2apMsg->choice.successfulOutcome, sizeof(SuccessfulOutcomeE2_t));
+      if(e2apMsg->choice.successfulOutcome == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->choice.successfulOutcome->procedureCode = ProcedureCodeE2_id_E2removal;
+      e2apMsg->choice.successfulOutcome->criticality = CriticalityE2_reject;
+      e2apMsg->choice.successfulOutcome->value.present = SuccessfulOutcomeE2__value_PR_E2RemovalResponse;
+      e2RemovalResponse = &e2apMsg->choice.successfulOutcome->value.choice.E2RemovalResponse;
+
+      elementCnt = 1;
+      e2RemovalResponse->protocolIEs.list.count = elementCnt;
+      e2RemovalResponse->protocolIEs.list.size = elementCnt * sizeof(E2RemovalResponseIEs_t *);
+      DU_ALLOC(e2RemovalResponse->protocolIEs.list.array, e2RemovalResponse->protocolIEs.list.size);
+      if(!e2RemovalResponse->protocolIEs.list.array)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      for(ieIdx=0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(e2RemovalResponse->protocolIEs.list.array[ieIdx], sizeof(E2RemovalResponseIEs_t));
+         if(!e2RemovalResponse->protocolIEs.list.array[ieIdx])
+         {
+            DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+            break;
+         }
+      }
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      e2RemovalResponse->protocolIEs.list.array[ieIdx]->id =  ProtocolIE_IDE2_id_TransactionID;
+      e2RemovalResponse->protocolIEs.list.array[ieIdx]->criticality = CriticalityE2_reject;
+      e2RemovalResponse->protocolIEs.list.array[ieIdx]->value.present = E2RemovalResponseIEs__value_PR_TransactionID;
+      e2RemovalResponse->protocolIEs.list.array[ieIdx]->value.choice.TransactionID = transId;
+
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf, encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode E2 removal response structure (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : Created APER encoded buffer for E2 Removal Response \n");
+         for(int i=0; i< encBufSize; i++)
+         {
+            DU_LOG("%x",encBuf[i]);
+         }
+      }
+
+      /* Sending msg */
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Failed to send E2 Removal Response");
+         break;
+      }
+
+      ret = ROK;
+      break;
+   }while(true);
+
+   FreeE2RemovalResponse(e2apMsg);
+   return ret;
+}
+
+/******************************************************************
+ *
+ * @brief Deallocation of memory allocated by aper decoder for Removal req
+ *
+ * @details
+ *
+ *    Function : freeAperDecodingOfE2RemovalReq
+ *
+ *    Functionality: Deallocation of memory allocated by aper decoder for
+ *    Removal req
+ *
+ * @params[in] Pointer to removalReq
+ * @return void
+ *
+ * ****************************************************************/
+void freeAperDecodingOfE2RemovalReq(E2RemovalRequest_t *removalReq)
+{
+   uint8_t arrIdx=0;
+
+   if(removalReq)
+   {
+      if(removalReq->protocolIEs.list.array)
+      {
+         for(arrIdx=0; arrIdx<removalReq->protocolIEs.list.count; arrIdx++)
+         {
+            if(removalReq->protocolIEs.list.array[arrIdx])
+            {
+               free(removalReq->protocolIEs.list.array[arrIdx]);
+            }
+         }
+         free(removalReq->protocolIEs.list.array);
+      }
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Process Removal req received from RIC
+ *
+ * @details
+ *
+ *    Function : procE2RemovalRequest
+ *
+ * Functionality: Process Removal req received from RIC
+ *
+ * @param  E2AP_PDU_t  *e2apMsg
+ * @return void
+ *
+ ******************************************************************/
+
+void procE2RemovalRequest(E2AP_PDU_t  *e2apMsg)
+{
+   uint8_t arrIdx =0;
+   uint16_t transId =0;
+   E2FailureCause failureCause;
+   E2RemovalRequest_t *removalReq=NULLP;
+
+   DU_LOG("\nINFO   -->  E2AP : E2 Removal request received");
+   removalReq = &e2apMsg->choice.initiatingMessage->value.choice.E2RemovalRequest;
+   
+   for(arrIdx=0; arrIdx<removalReq->protocolIEs.list.count; arrIdx++)
+   {
+      switch(removalReq->protocolIEs.list.array[arrIdx]->id)
+      {
+         case ProtocolIE_IDE2_id_TransactionID:
+            {
+               transId = removalReq->protocolIEs.list.array[arrIdx]->value.choice.TransactionID;
+               break;
+            }
+         default:
+            {
+               DU_LOG("\nERROR  -->  E2AP : Invalid IE recevied [%d]", transId);
+               break;
+            }
+      }
+   }
+   
+   if(transId>=0 && transId<=255)
+   {
+      if(BuildAndSendRemovalResponse(transId) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Failed to build and send Removal response");
+      }
+   }
+   else
+   {
+      failureCause.causeType = E2_PROTOCOL;
+      failureCause.cause = E2_ABSTRACT_SYNTAX_ERROR_FALSELY_CONSTRUCTED_MESSAGE;
+
+      if(BuildAndSendRemovalFailure(transId, failureCause) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Failed to build and send Removal response");
+      }
+   }
+   freeAperDecodingOfE2RemovalReq(removalReq);
 }
 
 /*******************************************************************
@@ -510,6 +977,7 @@ uint8_t BuildGlobalgNBId(GlobalE2node_gNB_ID_t *gNbId)
 
 uint8_t fillE2NodeConfig(PTR e2NodeCfg, E2NodeComponent *e2NodeComponentInfo, ConfigType configType)
 {
+   E2NodeConfig *e2NodeConfig=NULLP;
    E2nodeComponentInterfaceType_t *interfaceType=NULLP;
    E2nodeComponentID_t *componentID =NULLP;
    E2nodeComponentConfiguration_t *configuration=NULLP;
@@ -525,6 +993,7 @@ uint8_t fillE2NodeConfig(PTR e2NodeCfg, E2NodeComponent *e2NodeComponentInfo, Co
          interfaceType = &e2NodeAddItem->e2nodeComponentInterfaceType;
          componentID   = &e2NodeAddItem->e2nodeComponentID;
          configuration = &e2NodeAddItem->e2nodeComponentConfiguration; 
+         e2NodeConfig = e2NodeComponentInfo->addConfiguration;
          break;
       }
       case CONFIG_MOD:
@@ -533,6 +1002,7 @@ uint8_t fillE2NodeConfig(PTR e2NodeCfg, E2NodeComponent *e2NodeComponentInfo, Co
          interfaceType = &e2NodeUpdateItem->e2nodeComponentInterfaceType;
          componentID   = &e2NodeUpdateItem->e2nodeComponentID;
          configuration = &e2NodeUpdateItem->e2nodeComponentConfiguration; 
+         e2NodeConfig = e2NodeComponentInfo->updateConfiguration;
          break;
       }
       case CONFIG_DEL:
@@ -585,9 +1055,9 @@ uint8_t fillE2NodeConfig(PTR e2NodeCfg, E2NodeComponent *e2NodeComponentInfo, Co
    }
 
    /* E2 Node Component Request Part */
-   if(e2NodeComponentInfo->componentRequestPart)
+   if(e2NodeConfig->componentRequestPart)
    {
-      configuration->e2nodeComponentRequestPart.size = e2NodeComponentInfo->reqBufSize ;
+      configuration->e2nodeComponentRequestPart.size = e2NodeConfig->reqBufSize ;
       DU_ALLOC(configuration->e2nodeComponentRequestPart.buf,\
             configuration->e2nodeComponentRequestPart.size);
       if(configuration->e2nodeComponentRequestPart.buf == NULLP)
@@ -597,7 +1067,7 @@ uint8_t fillE2NodeConfig(PTR e2NodeCfg, E2NodeComponent *e2NodeComponentInfo, Co
       }
 
       memcpy(configuration->e2nodeComponentRequestPart.buf,\
-            e2NodeComponentInfo->componentRequestPart, configuration->\
+            e2NodeConfig->componentRequestPart, configuration->\
             e2nodeComponentRequestPart.size);
    }
    else
@@ -607,22 +1077,18 @@ uint8_t fillE2NodeConfig(PTR e2NodeCfg, E2NodeComponent *e2NodeComponentInfo, Co
    }
 
    /* E2 Node Component Response Part */
-   if(e2NodeComponentInfo->componentResponsePart)
+   if(e2NodeConfig->componentResponsePart)
    {
-      configuration->e2nodeComponentResponsePart.size = e2NodeComponentInfo->rspBufSize; 
+      configuration->e2nodeComponentResponsePart.size = e2NodeConfig->rspBufSize; 
       DU_ALLOC(configuration->e2nodeComponentResponsePart.buf, configuration->e2nodeComponentResponsePart.size);
       if(configuration->e2nodeComponentResponsePart.buf == NULLP)
       {
          DU_LOG("\nERROR  --> E2AP: Memory allocation failed in function %s at line %d",__func__,__LINE__);
          return RFAILED;
       }
-      memcpy(configuration->e2nodeComponentResponsePart.buf,  e2NodeComponentInfo->componentResponsePart, configuration->\
+      memcpy(configuration->e2nodeComponentResponsePart.buf,  e2NodeConfig->componentResponsePart, configuration->\
             e2nodeComponentResponsePart.size);
-   }
-   else
-   {
       DU_LOG("\nERROR  --> E2AP: componentResponsePart is null");
-      return RFAILED;
    }
    
    return ROK;
@@ -707,7 +1173,7 @@ uint8_t BuildE2NodeConfigAddList(E2nodeComponentConfigAddition_List_t *e2NodeAdd
       {
          /* Getting only those E2 node configuration from DuCb whose interface
           * and action type is present in the received array */
-         e2NodeComponentInfo = fetchE2NodeComponentInfo(e2NodeList[arrIdx].interface, e2NodeList[arrIdx].actionType, &node);
+         e2NodeComponentInfo = fetchE2NodeComponentInfo(e2NodeList[arrIdx].interface, e2NodeList[arrIdx].componentId, &node);
       }
       
       if(!e2NodeComponentInfo)
@@ -776,7 +1242,7 @@ uint8_t BuildE2NodeConfigUpdateList(E2nodeComponentConfigUpdate_List_t *e2NodeUp
          return RFAILED;
       }
 
-      e2NodeComponentInfo= fetchE2NodeComponentInfo(updateE2Node[arrIdx].interface, updateE2Node[arrIdx].actionType, &node);
+      e2NodeComponentInfo= fetchE2NodeComponentInfo(updateE2Node[arrIdx].interface, updateE2Node[arrIdx].componentId, &node);
       if(!e2NodeComponentInfo)
       {
          DU_LOG("\nERROR  --> E2AP : Received null e2NodeComponentInfo at line number %d",__LINE__);
@@ -846,7 +1312,7 @@ uint8_t BuildE2NodeConfigRemoveList(E2nodeComponentConfigRemoval_List_t *e2NodeR
          return RFAILED;
       }
 
-      e2NodeComponentInfo= fetchE2NodeComponentInfo(updateE2Node[arrIdx].interface, updateE2Node[arrIdx].actionType, &node);
+      e2NodeComponentInfo= fetchE2NodeComponentInfo(updateE2Node[arrIdx].interface,updateE2Node[arrIdx].componentId, &node);
       if(!e2NodeComponentInfo)
       {
          DU_LOG("\nERROR  --> E2AP : Received null e2NodeComponentInfo at line number %d",__LINE__);
@@ -1524,8 +1990,8 @@ void FreeE2SetupReq(E2AP_PDU_t *e2apMsg)
 uint8_t BuildAndSendE2SetupReq()
 {
    uint8_t arrIdx = 0, elementCnt=0;
-   uint8_t transId = 0, ret = ROK;
-   bool memAllocFailed;
+   uint8_t transId = 0, ret = RFAILED;
+   bool memAllocFailed = false;
    E2AP_PDU_t        *e2apMsg = NULLP;
    E2setupRequest_t  *e2SetupReq = NULLP;
    asn_enc_rval_t     encRetVal;       /* Encoder return value */
@@ -2115,6 +2581,107 @@ void freeAperDecodingOfE2SetupRsp(E2setupResponse_t *e2SetRspMsg)
       }
    }
 }
+
+/******************************************************************
+ *
+ * @brief handling of e2 noe config update ack ies
+ *
+ * @details
+ *
+ *    Function :handleE2NodeConfigUpdateAckIes 
+ *
+ *    Functionality: handling of e2 noe config update ack ies
+ *
+ * @params[in] 
+ *    Pointer to the E2 Node cfg
+ *    Procedure code
+ * @return void
+******************************************************************/
+
+void handleE2NodeConfigUpdateAckIes(PTR e2NodeCfg, uint8_t procedureCode)
+{
+   CmLList         *node=NULLP;
+   E2NodeComponent *e2NodeComponentInfo=NULLP;
+   E2nodeComponentID_t *e2nodeComponentID=NULLP;
+   E2nodeComponentConfigRemovalAck_Item_t *removalAckItem=NULLP;
+   E2nodeComponentConfigUpdateAck_Item_t *updateAckItem=NULLP;
+   E2nodeComponentConfigAdditionAck_Item_t *additionAckItem=NULLP;
+
+   switch(procedureCode)
+   {
+      case ProtocolIE_IDE2_id_E2nodeComponentConfigAdditionAck:
+         {
+            additionAckItem = (E2nodeComponentConfigAdditionAck_Item_t *)e2NodeCfg;
+            e2nodeComponentID = &additionAckItem->e2nodeComponentID;
+            break;
+         }
+      case ProtocolIE_IDE2_id_E2nodeComponentConfigUpdateAck:
+         {
+            updateAckItem = (E2nodeComponentConfigUpdateAck_Item_t*) e2NodeCfg;
+            e2nodeComponentID = &updateAckItem->e2nodeComponentID;
+            break;
+         }
+      case  ProtocolIE_IDE2_id_E2nodeComponentConfigRemovalAck:
+         {
+            removalAckItem= (E2nodeComponentConfigRemovalAck_Item_t*)e2NodeCfg;
+            e2nodeComponentID = &removalAckItem->e2nodeComponentID;
+            break;
+         }
+   }
+
+   switch(e2nodeComponentID->present)
+   {
+      case E2nodeComponentID_PR_e2nodeComponentInterfaceTypeF1:
+         {
+            e2NodeComponentInfo = fetchE2NodeComponentInfo(F1, e2nodeComponentID->choice.e2nodeComponentInterfaceTypeF1->gNB_DU_ID.buf[0], &node);
+            if(!e2NodeComponentInfo)
+            {
+               DU_LOG("\nERROR  --> E2AP : Received null e2NodeComponentInfo at line number %d",__LINE__);
+               return;
+            }
+            break;
+         }
+      default:
+         break;
+   }
+   
+   switch(procedureCode)
+   {
+      case ProtocolIE_IDE2_id_E2nodeComponentConfigAdditionAck:
+         {
+            DU_FREE(e2NodeComponentInfo->addConfiguration->componentRequestPart, e2NodeComponentInfo->addConfiguration->reqBufSize);
+            DU_FREE(e2NodeComponentInfo->addConfiguration->componentResponsePart, e2NodeComponentInfo->addConfiguration->rspBufSize);
+            DU_FREE(e2NodeComponentInfo->addConfiguration, sizeof(E2NodeConfig));
+            break;
+         }
+      case ProtocolIE_IDE2_id_E2nodeComponentConfigUpdateAck:
+         {
+            DU_FREE(e2NodeComponentInfo->updateConfiguration->componentRequestPart, e2NodeComponentInfo->updateConfiguration->reqBufSize);
+            DU_FREE(e2NodeComponentInfo->updateConfiguration->componentResponsePart, e2NodeComponentInfo->updateConfiguration->rspBufSize);
+            DU_FREE(e2NodeComponentInfo->updateConfiguration, sizeof(E2NodeConfig));
+            break;
+         }
+      case  ProtocolIE_IDE2_id_E2nodeComponentConfigRemovalAck:
+         {
+            cmLListDelFrm(&duCb.e2apDb.e2NodeComponentList, node);
+            if(e2NodeComponentInfo->addConfiguration)
+            {
+               DU_FREE(e2NodeComponentInfo->addConfiguration->componentRequestPart, e2NodeComponentInfo->addConfiguration->reqBufSize);
+               DU_FREE(e2NodeComponentInfo->addConfiguration->componentResponsePart, e2NodeComponentInfo->addConfiguration->rspBufSize);
+               DU_FREE(e2NodeComponentInfo->addConfiguration, sizeof(E2NodeConfig));
+            }
+            if(e2NodeComponentInfo->updateConfiguration)
+            {
+               DU_FREE(e2NodeComponentInfo->updateConfiguration->componentRequestPart, e2NodeComponentInfo->updateConfiguration->reqBufSize);
+               DU_FREE(e2NodeComponentInfo->updateConfiguration->componentResponsePart, e2NodeComponentInfo->updateConfiguration->rspBufSize);
+               DU_FREE(e2NodeComponentInfo->updateConfiguration, sizeof(E2NodeConfig));
+            }
+            DU_FREE(node, sizeof(CmLList));
+            break;
+         }
+   }
+}
+
 /******************************************************************
  *
  * @brief Processes E2 Setup Response sent by RIC
@@ -2126,18 +2693,16 @@ void freeAperDecodingOfE2SetupRsp(E2setupResponse_t *e2SetRspMsg)
  *    Functionality: Processes E2 Setup Response sent by RIC
  *
  * @params[in] E2AP_PDU_t ASN decoded E2AP message
- * @return ROK     - success
- *         RFAILED - failure
+ * @return void
  *
  * ****************************************************************/
 
-uint8_t procE2SetupRsp(E2AP_PDU_t *e2apMsg)
+void procE2SetupRsp(E2AP_PDU_t *e2apMsg)
 {
+   bool invalidTransId = false;
    uint8_t arrIdx =0, transId=0, idx=0; 
    uint32_t recvBufLen;             
    E2setupResponse_t *e2SetRspMsg=NULL;
-   CmLList         *node=NULL;
-   E2NodeComponent *e2NodeComponentInfo=NULL;
    E2nodeComponentConfigAdditionAck_List_t *e2NodeCfgAckList=NULL;
    E2nodeComponentConfigAdditionAck_ItemIEs_t *e2NodeAddAckItem=NULL;
 
@@ -2160,7 +2725,7 @@ uint8_t procE2SetupRsp(E2AP_PDU_t *e2apMsg)
                else
                {
                   DU_LOG("\nERROR  -->  E2AP : Invalid transaction id [%d]", transId);
-                  return RFAILED;
+                  invalidTransId = true;
                }
                break;
             }
@@ -2170,60 +2735,47 @@ uint8_t procE2SetupRsp(E2AP_PDU_t *e2apMsg)
                /* To store the Ric Id Params */
                recvBufLen = sizeof(e2SetRspMsg->protocolIEs.list.array[arrIdx]->value\
                      .choice.GlobalRIC_ID.pLMN_Identity.size);
-                  memcpy(&duCb.e2apDb.ricId.plmnId, e2SetRspMsg->protocolIEs.list.array[arrIdx]\
-                        ->value.choice.GlobalRIC_ID.pLMN_Identity.buf, recvBufLen);
+               memcpy(&duCb.e2apDb.ricId.plmnId, e2SetRspMsg->protocolIEs.list.array[arrIdx]\
+                     ->value.choice.GlobalRIC_ID.pLMN_Identity.buf, recvBufLen);
                bitStringToInt(&e2SetRspMsg->protocolIEs.list.array[arrIdx]->value.choice.GlobalRIC_ID.ric_ID, &duCb.e2apDb.ricId);
                /*TODO : duCb.e2apDb.ricId.plmnId memory to be deallocated after the usage */
                break;
             }
 
          case ProtocolIE_IDE2_id_E2nodeComponentConfigAdditionAck:
-         {
-            e2NodeCfgAckList = &e2SetRspMsg->protocolIEs.list.array[arrIdx]->value.choice.E2nodeComponentConfigAdditionAck_List;
-            for(idx =0; idx <e2NodeCfgAckList->list.count; idx++)
             {
-               e2NodeAddAckItem = (E2nodeComponentConfigAdditionAck_ItemIEs_t*) e2NodeCfgAckList->list.array[idx];
-               switch(e2NodeAddAckItem->value.choice.E2nodeComponentConfigAdditionAck_Item.e2nodeComponentID.present)
+               e2NodeCfgAckList = &e2SetRspMsg->protocolIEs.list.array[arrIdx]->value.choice.E2nodeComponentConfigAdditionAck_List;
+               for(idx =0; idx <e2NodeCfgAckList->list.count; idx++)
                {
-                  case E2nodeComponentID_PR_e2nodeComponentInterfaceTypeF1:
-                     {
-                        e2NodeComponentInfo = fetchE2NodeComponentInfo(F1, E2_NODE_COMPONENT_ADD, &node);
-                        if(!e2NodeComponentInfo)
-                        {
-                           DU_LOG("\nERROR  --> E2AP : Received null e2NodeComponentInfo at line number %d",__LINE__);
-                           return RFAILED;
-                        }
-                        else
-                        {
-                           cmLListDelFrm(&duCb.e2apDb.e2NodeComponentList, node);
-                           DU_FREE(e2NodeComponentInfo->componentRequestPart, e2NodeComponentInfo->reqBufSize);
-                           DU_FREE(e2NodeComponentInfo->componentResponsePart, e2NodeComponentInfo->rspBufSize);
-                           DU_FREE(e2NodeComponentInfo, sizeof(E2NodeComponent));
-                           DU_FREE(node, sizeof(CmLList));
-                        }
-                        break;
-                     }
-                  default:
-                     break;
+                  e2NodeAddAckItem = (E2nodeComponentConfigAdditionAck_ItemIEs_t*) e2NodeCfgAckList->list.array[idx];
+                  handleE2NodeConfigUpdateAckIes((PTR)&e2NodeAddAckItem->value.choice.E2nodeComponentConfigAdditionAck_Item,\
+                  ProtocolIE_IDE2_id_E2nodeComponentConfigAdditionAck);
                }
+               break;
             }
-            break;
-         }
 
          default:
-            DU_LOG("\nERROR  -->  E2AP : Invalid IE received in E2SetupRsp:%ld",
-                  e2SetRspMsg->protocolIEs.list.array[arrIdx]->id);
-            break;
+            {
+               DU_LOG("\nERROR  -->  E2AP : Invalid IE received in E2SetupRsp:%ld",
+                     e2SetRspMsg->protocolIEs.list.array[arrIdx]->id);
+               break;
+            }
+      }
+
+      if(invalidTransId == true)
+      {
+         break;
       }
    }
    freeAperDecodingOfE2SetupRsp(e2SetRspMsg);
 
-   if(duSendE2NodeConfigurationUpdate() != ROK)
+   if(invalidTransId == false)
    {
-      DU_LOG("\nERROR  -->  E2AP : Failed to send E2 node config update");
-      return RFAILED;
+      if(duSendE2NodeConfigurationUpdate() != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Failed to send E2 node config update");
+      }
    }
-   return ROK;
 }
 
 /*******************************************************************
@@ -2477,8 +3029,8 @@ uint8_t extractMeasInfoList(CmLListCp *measInfoSupportedList, MeasurementInfoLis
 {
    uint8_t elementIdx = 0;
    MeasurementInfoForAction *measInfoSupportedDb = NULLP;
-   MeasurementInfo *measInfoSubscribedDb = NULLP, *measInfoToDel = NULLP;
-   CmLList *supportedMeasNode = NULLP, *measToAddNode = NULLP, *measToDelNode = NULLP;;
+   MeasurementInfo *measInfoSubscribedDb = NULLP;
+   CmLList *supportedMeasNode = NULLP, *measToAddNode = NULLP;
    MeasurementInfoItem_t *measItem = NULLP;
 
    /* Validate Measurement list is supported by E2 node. 
@@ -2560,13 +3112,7 @@ uint8_t extractMeasInfoList(CmLListCp *measInfoSupportedList, MeasurementInfoLis
        * Break out of for loop to search in next report style */
       if(!measInfoSubscribedDb)
       {
-         while(measInfoSubscribedList->count)
-         {
-            measToDelNode = cmLListDelFrm(measInfoSubscribedList, measInfoSubscribedList->first);
-            measInfoToDel = (MeasurementInfo*)measToDelNode->node;
-            DU_FREE(measInfoToDel, sizeof(MeasurementInfo));
-            DU_FREE(measToDelNode, sizeof(CmLList));
-         }
+         deleteMeasurementInfoList(measInfoSubscribedList);
          break;
       }
 
@@ -2697,6 +3243,108 @@ uint8_t extractRicActionDef(RanFunction *ranFuncDb, ActionDefinition *actionDefD
 
 /*******************************************************************
  *
+ * @brief add RIC Subs action info
+ *
+ * @details
+ *
+ *    Function : addRicSubsAction
+ *
+ * Functionality: add Ric Subs action info
+ *
+ * @parameter
+ *    RAN function DB
+ *    Pointer to Ric Subc info
+ *    Action Sequence list
+ *    Procedure Code
+ *    E2 Failure Cause
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+
+CmLList *addRicSubsAction(RanFunction *ranFuncDb, PTR ricSubsInfo, CmLListCp *actionSequence, uint8_t procedureCode, E2FailureCause *failureCause)
+{
+   CmLList *actionNode = NULLP;
+   ActionInfo *actionDb = NULLP;
+   RICactionID_t ricActionID;
+   RICactionType_t ricActionType;
+   RICactionDefinition_t *ricActionDefinition= NULLP;
+   RICaction_ToBeSetup_Item_t *setupItem= NULLP;
+   RICaction_ToBeAddedForModification_Item_t *addIem= NULLP;
+   RICaction_ToBeModifiedForModification_Item_t *modifiedItem= NULLP;
+
+   switch(procedureCode)
+   {
+      case ProtocolIE_IDE2_id_RICaction_ToBeSetup_Item:
+         {
+            setupItem = (RICaction_ToBeSetup_Item_t *)ricSubsInfo;
+            ricActionID= setupItem->ricActionID;
+            ricActionType= setupItem->ricActionType;
+            if(setupItem->ricActionDefinition)
+            {
+               ricActionDefinition = setupItem->ricActionDefinition;
+            }
+            break;
+         }
+      case ProtocolIE_IDE2_id_RICaction_ToBeAddedForModification_Item:
+         {
+            addIem = (RICaction_ToBeAddedForModification_Item_t*) ricSubsInfo;
+            ricActionID= addIem->ricActionID;
+            ricActionType= addIem->ricActionType;
+            ricActionDefinition = &addIem->ricActionDefinition;
+
+            break;
+         }
+      case  ProtocolIE_IDE2_id_RICaction_ToBeModifiedForModification_Item:
+         {
+            modifiedItem= (RICaction_ToBeModifiedForModification_Item_t*)ricSubsInfo;
+            ricActionID= modifiedItem->ricActionID;
+            /* Added since ricActionType IE is not present in case of
+             * modification */
+            ricActionType = RICactionType_report;
+            if(modifiedItem->ricActionDefinition)
+            {
+               ricActionDefinition = modifiedItem->ricActionDefinition;
+            }
+            break;
+         }
+   }
+
+
+   DU_ALLOC(actionDb, sizeof(ActionInfo));   
+   if(actionDb==NULLP)
+   {
+      DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at %d",__func__,__LINE__);
+      return NULLP;
+   }
+   if(ricActionType== RICactionType_report)
+   {
+      actionDb->actionId = ricActionID;
+      actionDb->type = REPORT;
+
+      if(extractRicActionDef(ranFuncDb, &actionDb->definition, ricActionDefinition, failureCause) == ROK)
+      {
+         actionDb->action = CONFIG_ADD;
+      }
+
+      DU_ALLOC(actionNode, sizeof(CmLList));
+      if(actionNode)
+      {
+         actionNode->node = (PTR) actionDb;
+         cmLListAdd2Tail(actionSequence, actionNode);
+      }
+      else
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at %d",__func__,__LINE__);
+         DU_FREE(actionDb, sizeof(ActionInfo));
+         return NULLP;
+      }
+   }
+   return actionNode;
+  
+}
+/*******************************************************************
+ *
  * @brief Extract RIC Action to be setup
  *
  * @details
@@ -2717,6 +3365,7 @@ uint8_t extractRicActionDef(RanFunction *ranFuncDb, ActionDefinition *actionDefD
 uint8_t extractRicActionToBeSetup(RanFunction *ranFuncDb, RicSubscription *ricSubscriptionInfo, \
    RICactions_ToBeSetup_List_t *actionList, E2FailureCause *failureCause, PendingSubsRspInfo *subsRsp)
 {
+   CmLList *actionNode = NULLP;
    uint8_t actionIdx = 0;
    uint8_t ricActionId = 0;
    RICaction_ToBeSetup_ItemIEs_t *actionItem = NULLP;
@@ -2734,36 +3383,23 @@ uint8_t extractRicActionToBeSetup(RanFunction *ranFuncDb, RicSubscription *ricSu
                    * If RIC action definition's extraction and validation passes, 
                    * Then : 
                    * This action is added to action sequence list of subscription info */
-                  ricActionId = actionItem->value.choice.RICaction_ToBeSetup_Item.ricActionID;
-
-                  if(actionItem->value.choice.RICaction_ToBeSetup_Item.ricActionType == RICactionType_report)
+                  actionNode = addRicSubsAction(ranFuncDb, (PTR)&actionItem->value.choice.RICaction_ToBeSetup_Item,\
+                  &ricSubscriptionInfo->actionSequence, ProtocolIE_IDE2_id_RICaction_ToBeSetup_Item, failureCause);
+                  
+                  if(!actionNode)
                   {
-                     ricSubscriptionInfo->actionSequence[ricActionId].actionId = ricActionId;
-                     ricSubscriptionInfo->actionSequence[ricActionId].type = REPORT;
-
-                     if(extractRicActionDef(ranFuncDb, &ricSubscriptionInfo->actionSequence[ricActionId].definition, \
-                        actionItem->value.choice.RICaction_ToBeSetup_Item.ricActionDefinition, failureCause) == ROK)
+                     /* In case of any failure, action is rejected
+                      * Added to rejected-action-list in subscription response */
+                     subsRsp->rejectedActionList[subsRsp->numOfRejectedActions].id = ricActionId;
+                     if(failureCause->causeType == E2_NOTHING)
                      {
-                        ricSubscriptionInfo->actionSequence[ricActionId].action = CONFIG_ADD;
-                        ricSubscriptionInfo->numOfActions++;
-                        break;
+                        failureCause->causeType = E2_RIC_REQUEST;
+                        failureCause->cause = E2_CONTROL_FAILED_TO_EXECUTE;
                      }
+                     memcpy(&subsRsp->rejectedActionList[subsRsp->numOfRejectedActions].failureCause, \
+                           failureCause, sizeof(E2FailureCause));
+                     subsRsp->numOfRejectedActions++;
                   }
-
-                  /* In case of any failure, action is rejected
-                   * Added to rejected-action-list in subscription response */
-                  memset(&ricSubscriptionInfo->actionSequence[ricActionId], 0, sizeof(ActionInfo));
-                  ricSubscriptionInfo->actionSequence[ricActionId].actionId = -1;
-
-                  subsRsp->rejectedActionList[subsRsp->numOfRejectedActions].id = ricActionId;
-                  if(failureCause->causeType == E2_NOTHING)
-                  {
-                     failureCause->causeType = E2_RIC_REQUEST;
-                     failureCause->cause = E2_ACTION_NOT_SUPPORTED;
-                  }
-                  memcpy(&subsRsp->rejectedActionList[subsRsp->numOfRejectedActions].failureCause, \
-                        failureCause, sizeof(E2FailureCause));
-                  subsRsp->numOfRejectedActions++;
                   break;
                }
             default:
@@ -2774,7 +3410,7 @@ uint8_t extractRicActionToBeSetup(RanFunction *ranFuncDb, RicSubscription *ricSu
    }
 
    /* If there is even 1 action that can be added, return ROK */
-   if(ricSubscriptionInfo->numOfActions)
+   if(ricSubscriptionInfo->actionSequence.count)
       return ROK;
 
    if(failureCause->causeType == E2_NOTHING)
@@ -2802,7 +3438,7 @@ uint8_t extractRicActionToBeSetup(RanFunction *ranFuncDb, RicSubscription *ricSu
  * ****************************************************************/
 uint8_t procRicSubscriptionRequest(E2AP_PDU_t *e2apMsg)
 {
-   uint8_t idx = 0, actionIdx = 0; 
+   uint8_t idx = 0; 
    uint8_t ret = ROK;
    uint16_t ranFuncId = 0;
    RicRequestId ricReqId;
@@ -2869,11 +3505,6 @@ uint8_t procRicSubscriptionRequest(E2AP_PDU_t *e2apMsg)
                   ricSubscriptionInfo->requestId.instanceId = ricReqId.instanceId;
                   ricSubscriptionInfo->ranFuncId = ranFuncId;
 
-                  for(actionIdx = 0; actionIdx < MAX_RIC_ACTION; actionIdx++)
-                  {
-                     ricSubscriptionInfo->actionSequence[actionIdx].actionId = -1;
-                  }
-
                   memset(&ranFuncDb->pendingSubsRspInfo[ranFuncDb->numPendingSubsRsp], 0, sizeof(PendingSubsRspInfo));
                   memcpy(&ranFuncDb->pendingSubsRspInfo[ranFuncDb->numPendingSubsRsp].requestId, 
                         &ricReqId, sizeof(RicRequestId));
@@ -2919,6 +3550,7 @@ uint8_t procRicSubscriptionRequest(E2AP_PDU_t *e2apMsg)
    if(ret == ROK)
    {
       cmInitTimers(&(ricSubscriptionInfo->ricSubsReportTimer), 1);
+      ricSubscriptionInfo->action = CONFIG_ADD;
 
       /* Add RAN subcription detail to RAN function */
       DU_ALLOC(ricSubscriptionNode, sizeof(CmLList));
@@ -2947,7 +3579,6 @@ uint8_t procRicSubscriptionRequest(E2AP_PDU_t *e2apMsg)
       /* Send RIC Subcription Failure */
       BuildAndSendRicSubscriptionFailure(ricReqId, ranFuncId, failureCause);
    }
-
    return ret;
 }
 
@@ -3374,16 +4005,11 @@ uint8_t fillMeasRecord(MeasurementRecord_t *measRecord, MeasurementInfo *measInf
          measRecord->list.array[measRecIdx]->choice.real = measVal;
      }
      measRecIdx++;
-
+     measValNode= measValNode->next;  
      /* Once the measurement record is added to the message, delete it from DB */
-     cmLListDelFrm(&measInfoDb->measuredValue, measValNode);
-     DU_FREE(measValNode->node, sizeof(double));
-     DU_FREE(measValNode, sizeof(CmLList));
-
-     CM_LLIST_FIRST_NODE(&measInfoDb->measuredValue, measValNode);
      measVal = 0;
    }
-
+   deleteMeasuredValueList(&measInfoDb->measuredValue);
    return ROK;
 }
 
@@ -4444,6 +5070,7 @@ void FreeE2ResetRequest(E2AP_PDU_t *e2apMsg)
  *         - Buld and send the E2 reset request msg to RIC
  *
  * @params[in]
+ *    Reset cause
  * @return ROK     - success
  *         RFAILED - failure
  *
@@ -4529,13 +5156,13 @@ uint8_t BuildAndSendE2ResetRequest(E2FailureCause resetCause)
             encBuf);
       if(encRetVal.encoded == ENCODE_FAIL)
       {
-         DU_LOG("\nERROR  -->  E2AP : Could not encode E2SetupRequest structure (at %s)\n",\
+         DU_LOG("\nERROR  -->  E2AP : Could not encode reset request structure (at %s)\n",\
                encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
          break;
       }
       else
       {
-         DU_LOG("\nDEBUG   -->  E2AP : Created APER encoded buffer for E2SetupRequest\n");
+         DU_LOG("\nDEBUG   -->  E2AP : Created APER encoded buffer for reset request\n");
 #ifdef DEBUG_ASN_PRINT
          for(int i=0; i< encBufSize; i++)
          {
@@ -4617,14 +5244,15 @@ void freeAperDecodingOfE2ResetRsp(ResetResponseE2_t *resetResponse)
  *    Functionality: Processes E2 Reset Response sent by RIC
  *
  * @params[in] E2AP_PDU_t ASN decoded E2AP message
- * @return ROK     - success
- *         RFAILED - failure
+ * @return void
  *
  * ****************************************************************/
-uint8_t procResetResponse(E2AP_PDU_t *e2apMsg)
+void procResetResponse(E2AP_PDU_t *e2apMsg)
 {
-   uint8_t ieIdx =0, transId;
-   ResetResponseE2_t *resetResponse;
+   bool invalidTransId=false;
+   uint8_t ieIdx =0, transId =0;
+   uint16_t ranFuncIdx=0;
+   ResetResponseE2_t *resetResponse =NULLP;
 
    DU_LOG("\nINFO   -->  E2AP : E2 Reset Response received");
    resetResponse = &e2apMsg->choice.successfulOutcome->value.choice.ResetResponseE2;;
@@ -4634,36 +5262,47 @@ uint8_t procResetResponse(E2AP_PDU_t *e2apMsg)
       switch(resetResponse->protocolIEs.list.array[ieIdx]->id)
       {
          case ProtocolIE_IDE2_id_TransactionID:
-            transId = resetResponse->protocolIEs.list.array[ieIdx]->value.choice.TransactionID;
-            if((duCb.e2apDb.e2TransInfo.e2InitTransaction[transId].transactionId == transId) && \
-                  (duCb.e2apDb.e2TransInfo.e2InitTransaction[transId].procedureCode == e2apMsg->choice.successfulOutcome->procedureCode))
             {
-               memset(&duCb.e2apDb.e2TransInfo.e2InitTransaction[transId], 0, sizeof(E2TransInfo));
+               transId = resetResponse->protocolIEs.list.array[ieIdx]->value.choice.TransactionID;
+               if((duCb.e2apDb.e2TransInfo.e2InitTransaction[transId].transactionId == transId) && \
+                     (duCb.e2apDb.e2TransInfo.e2InitTransaction[transId].procedureCode == e2apMsg->choice.successfulOutcome->procedureCode))
+               {
+                  memset(&duCb.e2apDb.e2TransInfo.e2InitTransaction[transId], 0, sizeof(E2TransInfo));
+               }
+               else
+               {
+                  DU_LOG("\nERROR  -->  E2AP : Invalid transaction id [%d]", transId);
+                  invalidTransId = true;
+               }
+               break;
             }
-            else
-            {
-               DU_LOG("\nERROR  -->  E2AP : Invalid transaction id [%d]", transId);
-               return RFAILED;
-            }
-            break;
          case ProtocolIE_IDE2_id_CriticalityDiagnosticsE2:
-            /* As per ORAN WG3 E2AP spec v3.0, section 9.2.2
-               Criticality Diagnostics IE is sent by Near-RT RIC when parts of a received message i.e. 
-               Reset Request in this case, have not been comprehended or were missing, or if the message 
-               contained logical errors.
-
-               Processing of this ID should be implemented when negative call flows are to be supported.
-             */
-            break;
+            {
+               for(ranFuncIdx=0; ranFuncIdx<MAX_RAN_FUNCTION; ranFuncIdx++)
+               {
+                  if(duCb.e2apDb.ranFunction[ranFuncIdx].id >0)
+                  {
+                     deleteRicSubscriptionList(&(duCb.e2apDb.ranFunction[ranFuncIdx].subscriptionList));
+                     memset(&(duCb.e2apDb.ranFunction[ranFuncIdx].pendingSubsRspInfo), 0, MAX_PENDING_SUBSCRIPTION_RSP*sizeof(PendingSubsRspInfo));
+                  }
+               }
+               break;
+            }
          default:
-            DU_LOG("\nERROR  -->  E2AP : Invalid IE received in E2 Reset Response : %ld",
-                  resetResponse->protocolIEs.list.array[ieIdx]->id);
-            break;
+            {
+               DU_LOG("\nERROR  -->  E2AP : Invalid IE received in E2 Reset Response : %ld",
+                     resetResponse->protocolIEs.list.array[ieIdx]->id);
+               break;
+            }
+      }
+
+      if(invalidTransId == true)
+      {
+         break;
       }
    }
 
    freeAperDecodingOfE2ResetRsp(resetResponse);
-   return ROK;
 }
 
 /******************************************************************
@@ -5515,33 +6154,26 @@ uint8_t duSendE2NodeConfigurationUpdate()
    {
       e2NodeComponentInfo = (E2NodeComponent*)node->node;
 
-      if(e2NodeComponentInfo->componentRequestPart && e2NodeComponentInfo->componentResponsePart)
+      if(e2NodeComponentInfo->addConfiguration)
       {
-         switch(e2NodeComponentInfo->componentActionType)
-         {
-            case E2_NODE_COMPONENT_ADD:
-               {
-                  e2NodeList.addE2Node[e2NodeList.addE2NodeCount].interface = e2NodeComponentInfo->interfaceType;
-                  e2NodeList.addE2Node[e2NodeList.addE2NodeCount].actionType = e2NodeComponentInfo->componentActionType;
-                  e2NodeList.removeE2NodeCount++;
-                  break;
-               }
-            case E2_NODE_COMPONENT_UPDATE:
-               {
-                  e2NodeList.updateE2Node[e2NodeList.updateE2NodeCount].interface = e2NodeComponentInfo->interfaceType;
-                  e2NodeList.updateE2Node[e2NodeList.updateE2NodeCount].actionType = e2NodeComponentInfo->componentActionType;
-                  e2NodeList.updateE2NodeCount++;
-                  break;
-
-               }
-            case E2_NODE_COMPONENT_DEL:
-               {
-                  e2NodeList.removeE2Node[e2NodeList.removeE2NodeCount].interface = e2NodeComponentInfo->interfaceType;
-                  e2NodeList.removeE2Node[e2NodeList.removeE2NodeCount].actionType = e2NodeComponentInfo->componentActionType;
-                  e2NodeList.removeE2NodeCount++;
-                  break;
-               }
-         }
+         e2NodeList.addE2Node[e2NodeList.addE2NodeCount].interface = e2NodeComponentInfo->interfaceType;
+         e2NodeList.addE2Node[e2NodeList.addE2NodeCount].componentId= e2NodeComponentInfo->componentId;
+         e2NodeList.addE2NodeCount++;
+         break;
+      }
+      if(e2NodeComponentInfo->updateConfiguration)
+      {
+         e2NodeList.updateE2Node[e2NodeList.updateE2NodeCount].interface = e2NodeComponentInfo->interfaceType;
+         e2NodeList.updateE2Node[e2NodeList.updateE2NodeCount].componentId= e2NodeComponentInfo->componentId;
+         e2NodeList.updateE2NodeCount++;
+         break;
+      }
+      if(e2NodeComponentInfo->deleteConfiguration == true)
+      {
+         e2NodeList.removeE2Node[e2NodeList.removeE2NodeCount].interface = e2NodeComponentInfo->interfaceType;
+         e2NodeList.removeE2Node[e2NodeList.removeE2NodeCount].componentId = e2NodeComponentInfo->componentId;
+         e2NodeList.removeE2NodeCount++;
+         break;
       }
       node = node->next;
    }
@@ -5635,6 +6267,12 @@ void FreeRicSubsModRequired(E2AP_PDU_t *e2apMsg)
    }
 }
 
+/* A RIC Subscription includes RIC subsequent action only for RIC Insert service.
+ * However, E2SM-KPM supports only RIC Report service.
+ * Hence there is no subsequent action in RIC subscription that may require modification.
+ * So commenting the action-modification IEs for the time being
+ */
+#if 0
 /*******************************************************************
  *
  * @brief Fill Action required to be modified list
@@ -5652,10 +6290,12 @@ void FreeRicSubsModRequired(E2AP_PDU_t *e2apMsg)
  *         RFAILED - failure
  *
  ******************************************************************/
-uint8_t FillActionReqdToBeModList(RICactions_RequiredToBeModified_List_t *actionToBeModList, uint8_t numActionsMod, \
-   RicSubscription *ricSubscription)
+uint8_t FillActionReqdToBeModList(RICactions_RequiredToBeModified_List_t *actionToBeModList, uint8_t numActionsMod,\
+      RicSubscription *ricSubscription)
 {
-   uint8_t arrIdx = 0, actionIdx = 0;
+   uint8_t arrIdx = 0;
+   CmLList *actionNode = NULLP;
+   ActionInfo *actionDb = NULLP;
    RICaction_RequiredToBeModified_ItemIEs_t *actionToBeMod = NULL;
 
    actionToBeModList->list.count = numActionsMod;
@@ -5668,9 +6308,11 @@ uint8_t FillActionReqdToBeModList(RICactions_RequiredToBeModified_List_t *action
    }
 
    arrIdx = 0;
-   for(actionIdx = 0; actionIdx < MAX_RIC_ACTION; actionIdx++)
+   CM_LLIST_FIRST_NODE(&ricSubscription->actionSequence, actionNode);
+   while(actionNode)
    {
-      if(ricSubscription->actionSequence[actionIdx].action == CONFIG_MOD)
+      actionDb = (ActionInfo*)(actionNode->node);
+      if(actionDb->action == CONFIG_MOD)
       {
          DU_ALLOC(actionToBeModList->list.array[arrIdx], sizeof(RICaction_RequiredToBeModified_ItemIEs_t));
          if(!actionToBeModList->list.array[arrIdx])
@@ -5685,7 +6327,7 @@ uint8_t FillActionReqdToBeModList(RICactions_RequiredToBeModified_List_t *action
          actionToBeMod->value.present = \
             RICaction_RequiredToBeModified_ItemIEs__value_PR_RICaction_RequiredToBeModified_Item;
          actionToBeMod->value.choice.RICaction_RequiredToBeModified_Item.ricActionID = \
-            ricSubscription->actionSequence[actionIdx].actionId;
+            actionDb->actionId;
          actionToBeMod->value.choice.RICaction_RequiredToBeModified_Item.ricTimeToWait = RICtimeToWait_w5ms;
 
          arrIdx++;
@@ -5694,7 +6336,7 @@ uint8_t FillActionReqdToBeModList(RICactions_RequiredToBeModified_List_t *action
 
    return ROK;
 }
-
+#endif
 /*******************************************************************
  *
  * @brief Fill Action required to be removed list
@@ -5715,7 +6357,9 @@ uint8_t FillActionReqdToBeModList(RICactions_RequiredToBeModified_List_t *action
 uint8_t FillActionReqdToBeRmvList(RICactions_RequiredToBeRemoved_List_t *actionToBeRmvList, uint8_t numActionsRmv, \
    RicSubscription *ricSubscription)
 {
-   uint8_t arrIdx = 0, actionIdx = 0;
+   uint8_t arrIdx = 0;
+   CmLList *actionNode = NULLP;
+   ActionInfo *actionDb = NULLP;
    RICaction_RequiredToBeRemoved_ItemIEs_t *actionToBeRmv = NULL;
 
    actionToBeRmvList->list.count = numActionsRmv;
@@ -5728,9 +6372,11 @@ uint8_t FillActionReqdToBeRmvList(RICactions_RequiredToBeRemoved_List_t *actionT
    }
 
    arrIdx = 0;
-   for(actionIdx = 0; actionIdx < MAX_RIC_ACTION; actionIdx++)
+   CM_LLIST_FIRST_NODE(&ricSubscription->actionSequence, actionNode);
+   while(actionNode)
    {
-      if(ricSubscription->actionSequence[actionIdx].action == CONFIG_DEL)
+      actionDb = (ActionInfo*)(actionNode->node);
+      if(actionDb->action == CONFIG_DEL)
       {
          DU_ALLOC(actionToBeRmvList->list.array[arrIdx], sizeof(RICaction_RequiredToBeRemoved_ItemIEs_t));
          if(!actionToBeRmvList->list.array[arrIdx])
@@ -5744,11 +6390,8 @@ uint8_t FillActionReqdToBeRmvList(RICactions_RequiredToBeRemoved_List_t *actionT
          actionToBeRmv->criticality = CriticalityE2_reject;
          actionToBeRmv->value.present = \
             RICaction_RequiredToBeRemoved_ItemIEs__value_PR_RICaction_RequiredToBeRemoved_Item;
-         actionToBeRmv->value.choice.RICaction_RequiredToBeRemoved_Item.ricActionID = \
-            ricSubscription->actionSequence[actionIdx].actionId;
-         fillE2Cause(&actionToBeRmv->value.choice.RICaction_RequiredToBeRemoved_Item.cause, \
-            ricSubscription->actionSequence[actionIdx].failureCause);
-
+         actionToBeRmv->value.choice.RICaction_RequiredToBeRemoved_Item.ricActionID = actionDb->actionId;
+         fillE2Cause(&actionToBeRmv->value.choice.RICaction_RequiredToBeRemoved_Item.cause, actionDb->failureCause);
          arrIdx++;
       }
    }
@@ -5774,19 +6417,28 @@ uint8_t FillActionReqdToBeRmvList(RICactions_RequiredToBeRemoved_List_t *actionT
  ******************************************************************/
 uint8_t FillRicSubsModRequired(RICsubscriptionModificationRequired_t *ricSubsModReqd, RicSubscription *ricSubscription)
 {
-   uint8_t ieIdx = 0, elementCnt=0, actionIdx = 0;
+   ActionInfo * actionDb=NULLP;
+   CmLList *actionNode = NULLP;
+   uint8_t ieIdx = 0, elementCnt=0;
    uint8_t numActionsMod = 0, numActionsRmv = 0;
    RICsubscriptionModificationRequired_IEs_t *ricSubsModReqdIe = NULLP;
-   RICactions_RequiredToBeModified_List_t *actionToBeModList = NULLP;
    RICactions_RequiredToBeRemoved_List_t  *actionToBeRmvList = NULLP;
 
+/* Unused in case of E2SM-KPM */
+#if 0
+   RICactions_RequiredToBeModified_List_t *actionToBeModList = NULLP;
+#endif
+
    /* Count number of Actions to be modified or deleted */
-   for(actionIdx = 0; actionIdx < MAX_RIC_ACTION; actionIdx++)
+   CM_LLIST_FIRST_NODE(&ricSubscription->actionSequence, actionNode);
+   while(actionNode)
    {
-      if(ricSubscription->actionSequence[actionIdx].action == CONFIG_MOD)
-         numActionsMod++;
-      else if(ricSubscription->actionSequence[actionIdx].action == CONFIG_DEL)
-         numActionsRmv++;
+       actionDb = (ActionInfo*)(actionNode->node);
+       if(actionDb->action == CONFIG_MOD)
+          numActionsMod++;
+       else if(actionDb->action == CONFIG_DEL)
+          numActionsRmv++;
+       actionNode = actionNode->next;
    }
 
    /* Count number of IEs to be added to messages */
@@ -5832,6 +6484,12 @@ uint8_t FillRicSubsModRequired(RICsubscriptionModificationRequired_t *ricSubsMod
    ricSubsModReqdIe->value.present = RICsubscriptionModificationRequired_IEs__value_PR_RANfunctionID;
    ricSubsModReqdIe->value.choice.RANfunctionID = ricSubscription->ranFuncId;
 
+/* A RIC Subscription includes RIC subsequent action only for RIC Insert service.
+ * However, E2SM-KPM supports only RIC Report service.
+ * Hence there is no subsequent action in RIC subscription that may require modification.
+ * So commenting the action-modification IEs for the time being
+ */
+#if 0
    /* RIC Actions Required to be Modified */
    if(numActionsMod)
    {
@@ -5849,6 +6507,7 @@ uint8_t FillRicSubsModRequired(RICsubscriptionModificationRequired_t *ricSubsMod
          return RFAILED;
       }
    }
+#endif
 
    /* RIC Actions Required to be removed */
    if(numActionsRmv)
@@ -5962,6 +6621,4395 @@ uint8_t BuildAndSendRicSubsModRequired(RicSubscription *ricSubscription)
 
 /*******************************************************************
  *
+ * @brief Free APER decoding of RIC Subscription Modification Confirm
+ *
+ * @details
+ *
+ *    Function : freeAperDecodingOfRicSubsModConfirm
+ *
+ * Functionality:  Free APER decoding of RIC Subscription 
+ *   Modification Confirm
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+void freeAperDecodingOfRicSubsModConfirm(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx = 0, arrIdx=0;
+   RICsubscriptionModificationConfirm_t *ricSubsModCfm = NULLP;
+   RICsubscriptionModificationConfirm_IEs_t *ricSubsModCfmIe = NULLP;
+   RICactions_ConfirmedForModification_List_t *modCfmList = NULLP;
+   RICactions_RefusedToBeModified_List_t *modRefusedList = NULLP;
+   RICactions_ConfirmedForRemoval_List_t *rmvCfmList = NULLP;
+   RICactions_RefusedToBeRemoved_List_t *rmvFailList = NULLP;
+
+   if(e2apMsg && e2apMsg->choice.successfulOutcome)
+   {
+      ricSubsModCfm = &e2apMsg->choice.successfulOutcome->value.choice.RICsubscriptionModificationConfirm;
+      if(ricSubsModCfm->protocolIEs.list.array)
+      {
+         for(ieIdx = 0; ieIdx < ricSubsModCfm->protocolIEs.list.count; ieIdx++)
+         {
+            if(ricSubsModCfm->protocolIEs.list.array[ieIdx])
+            {
+               ricSubsModCfmIe = ricSubsModCfm->protocolIEs.list.array[ieIdx];
+               switch(ricSubsModCfmIe->id)
+               {
+                  case ProtocolIE_IDE2_id_RICactionsConfirmedForModification_List:
+                     {
+                        modCfmList = &ricSubsModCfmIe->value.choice.RICactions_ConfirmedForModification_List;
+                        if(modCfmList->list.array)
+                        {
+                           for(arrIdx = 0; arrIdx < modCfmList->list.count; arrIdx++)
+                           {
+                              if(modCfmList->list.array[arrIdx])
+                                 free(modCfmList->list.array[arrIdx]);
+                           }
+                           free(modCfmList->list.array);
+                        }
+                        break;
+                     }
+
+                  case ProtocolIE_IDE2_id_RICactionsRefusedToBeModified_List:
+                     {
+                        modRefusedList = &ricSubsModCfmIe->value.choice.RICactions_RefusedToBeModified_List;
+                        if(modRefusedList->list.array)
+                        {
+                           for(arrIdx = 0; arrIdx < modRefusedList->list.count; arrIdx++)
+                           {
+                              if(modRefusedList->list.array[arrIdx])
+                                 free(modRefusedList->list.array[arrIdx]);
+                           }
+                           free(modRefusedList->list.array);
+                        }
+                        break;
+                     }
+
+                  case ProtocolIE_IDE2_id_RICactionsConfirmedForRemoval_List:
+                     {
+                        rmvCfmList = &ricSubsModCfmIe->value.choice.RICactions_ConfirmedForRemoval_List;
+                        if(rmvCfmList->list.array)
+                        {
+                           for(arrIdx = 0; arrIdx < rmvCfmList->list.count; arrIdx++)
+                           {
+                              if(rmvCfmList->list.array[arrIdx])
+                                 free(rmvCfmList->list.array[arrIdx]);
+                           }
+                           free(rmvCfmList->list.array);
+                        }
+                        break;
+                     }
+
+                  case ProtocolIE_IDE2_id_RICactionsRefusedToBeRemoved_List:
+                     {
+                        rmvFailList = &ricSubsModCfmIe->value.choice.RICactions_RefusedToBeRemoved_List;
+                        if(rmvFailList->list.array)
+                        {
+                           for(arrIdx = 0; arrIdx < rmvFailList->list.count; arrIdx++)
+                           {
+                              if(rmvFailList->list.array[arrIdx])
+                                 free(rmvFailList->list.array[arrIdx]);
+                           }
+                           free(rmvFailList->list.array);
+                        }
+                        break;
+                     }
+
+                  default:
+                     break;
+
+               }
+               free(ricSubsModCfmIe);
+            }
+         }
+         free(ricSubsModCfm->protocolIEs.list.array);
+      }
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Process RIC Subscription Modification Confirm Message
+ *
+ * @details
+ *
+ *    Function : procRicSubscriptionModificationConfirm
+ *
+ * Functionality:  Process RIC Subscription Modification Confirm
+ *    Message received from RIC. 
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+void procRicSubscriptionModificationConfirm(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t actionId = 0, ieIdx = 0, arrIdx = 0;
+   uint16_t ranFuncId = 0;
+   bool procFailure = false;
+   RicRequestId ricReqId;
+   RanFunction *ranFuncDb = NULLP;
+   CmLList *ricSubsNode = NULLP;
+   CmLList *actionNode= NULLP;
+   RicSubscription *ricSubsDb = NULLP;
+   ActionInfo *actionDb = NULLP;
+
+   RICsubscriptionModificationConfirm_t *ricSubsModCfm = NULLP;
+   RICsubscriptionModificationConfirm_IEs_t *ricSubsModCfmIe = NULLP;
+
+/* Not used in case of E2SM-KPM */
+#if 0
+   RICactions_ConfirmedForModification_List_t *modCfmList = NULLP;
+   RICaction_ConfirmedForModification_ItemIEs_t *modCfmListItem = NULLP;
+
+   RICactions_RefusedToBeModified_List_t *modRefusedList = NULLP;
+   RICaction_RefusedToBeModified_ItemIEs_t *modRefusedListItem = NULLP;
+#endif
+
+   RICactions_ConfirmedForRemoval_List_t *rmvCfmList = NULLP;
+   RICaction_ConfirmedForRemoval_ItemIEs_t *rmvCfmListItem = NULLP;
+
+   RICactions_RefusedToBeRemoved_List_t *rmvFailList = NULLP;
+   RICaction_RefusedToBeRemoved_ItemIEs_t *rmvFailListItem = NULLP;
+
+   DU_LOG("\nINFO   -->  E2AP : %s: Received RIC Subscription Modification Confirm", __func__);
+
+   do{
+      if(!e2apMsg)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: E2AP Message is NULL", __func__);
+         break;
+      }
+
+      if(!e2apMsg->choice.successfulOutcome)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Successful Outcome in E2AP message is NULL", __func__);
+         break;
+      }
+
+      ricSubsModCfm = &e2apMsg->choice.successfulOutcome->value.choice.RICsubscriptionModificationConfirm;
+      if(!ricSubsModCfm->protocolIEs.list.array)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Array conatining E2AP message IEs is null", __func__);
+         break;
+      }
+
+      for(ieIdx = 0; ieIdx < ricSubsModCfm->protocolIEs.list.count; ieIdx++)
+      {
+         if(!ricSubsModCfm->protocolIEs.list.array[ieIdx])
+         {
+            DU_LOG("\nERROR  -->  E2AP : %s: IE at index [%d] in E2AP message IEs list is null", __func__, ieIdx);
+            break;
+         }
+
+         ricSubsModCfmIe = ricSubsModCfm->protocolIEs.list.array[ieIdx];
+         switch(ricSubsModCfmIe->id)
+         {
+            case ProtocolIE_IDE2_id_RICrequestID:
+               {
+                  memset(&ricReqId, 0, sizeof(RicRequestId));
+                  ricReqId.requestorId = ricSubsModCfmIe->value.choice.RICrequestID.ricRequestorID;
+                  ricReqId.instanceId = ricSubsModCfmIe->value.choice.RICrequestID.ricInstanceID;
+                  break;
+               }
+
+            case ProtocolIE_IDE2_id_RANfunctionID:
+               {
+                  ranFuncId = ricSubsModCfmIe->value.choice.RANfunctionID;
+                  ranFuncDb = fetchRanFuncFromRanFuncId(ranFuncId);
+                  if(!ranFuncDb)
+                  {
+                     DU_LOG("\nERROR  -->  E2AP : %s: RAN Function ID [%d] not found", __func__, ranFuncId);
+                     procFailure = true;
+                     break;
+                  }
+
+                  ricSubsDb = fetchSubsInfoFromRicReqId(ricReqId, ranFuncDb, &ricSubsNode); 
+                  if(!ricSubsDb)
+                  {
+                     DU_LOG("\nERROR  -->  E2AP : %s: RIC Subscription not found for Requestor_ID [%d] Instance_ID [%d]",\
+                           __func__, ricReqId.requestorId, ricReqId.instanceId);
+                     procFailure = true;
+                     break;
+                  }
+
+                  break;
+               }
+
+/* A RIC Subscription includes RIC subsequent action only for RIC Insert service. 
+ * However, E2SM-KPM supports only RIC Report service. 
+ * Hence there is no subsequent action in RIC subscription that may require modification. 
+ * So commenting the action-modification IEs for the time being 
+ */
+#if 0
+            case ProtocolIE_IDE2_id_RICactionsConfirmedForModification_List:
+               {
+                  modCfmList = &ricSubsModCfmIe->value.choice.RICactions_ConfirmedForModification_List;
+                  for(arrIdx = 0; arrIdx < modCfmList->list.count; arrIdx++)
+                  {
+                     modCfmListItem = (RICaction_ConfirmedForModification_ItemIEs_t *)modCfmList->list.array[arrIdx];
+                     actionId = modCfmListItem->value.choice.RICaction_ConfirmedForModification_Item.ricActionID;
+
+                     actionDb = fetchActionInfoFromActionId(actionId, ricSubsDb, &actionNode, CONFIG_UNKNOWN);
+                     if(!actionDb)
+                     {
+                        DU_LOG("\nERROR  -->  E2AP : %s: Action ID [%d] not found", __func__, actionId);
+                     }
+                     else
+                     {
+                        actionDb->action = CONFIG_UNKNOWN;
+                        /* Further handling can be added here in future once the
+                         * use case of this procedure is identified */
+                     }
+                     actionDb = NULLP;
+                  }
+                  break;
+               }
+
+            case ProtocolIE_IDE2_id_RICactionsRefusedToBeModified_List:
+               {
+                  modRefusedList = &ricSubsModCfmIe->value.choice.RICactions_RefusedToBeModified_List;
+                  for(arrIdx = 0; arrIdx < modRefusedList->list.count; arrIdx++)
+                  {
+                    modRefusedListItem = (RICaction_RefusedToBeModified_ItemIEs_t *)modRefusedList->list.array[arrIdx];
+                    actionId = modRefusedListItem->value.choice.RICaction_RefusedToBeModified_Item.ricActionID;
+                    actionDb = fetchActionInfoFromActionId(actionId, ricSubsDb, &actionNode, CONFIG_UNKNOWN);
+                    if(!actionDb)
+                    {
+                       DU_LOG("\nERROR  -->  E2AP : %s: Action ID [%d] not found", __func__, actionId);
+                    }
+                    else
+                    {
+                       /* Spec doesnt mention if in case of failure, DU should retry for modify action 
+                        * Hence, chaging the action from CONFIG_MOD to CONFIG_UNKNOWN
+                        */
+                        actionDb->action = CONFIG_UNKNOWN;
+                    }
+                    actionDb = NULLP;
+                  }
+                  break;
+               }
+#endif
+
+            case ProtocolIE_IDE2_id_RICactionsConfirmedForRemoval_List:
+               {
+                  rmvCfmList = &ricSubsModCfmIe->value.choice.RICactions_ConfirmedForRemoval_List;
+                  for(arrIdx = 0; arrIdx < rmvCfmList->list.count; arrIdx++)
+                  {
+                     rmvCfmListItem = (RICaction_ConfirmedForRemoval_ItemIEs_t *)rmvCfmList->list.array[arrIdx];
+                     actionId = rmvCfmListItem->value.choice.RICaction_ConfirmedForRemoval_Item.ricActionID;
+                     actionDb = fetchActionInfoFromActionId(actionId, ricSubsDb, &actionNode, CONFIG_UNKNOWN);
+                     if(!actionDb)
+                     {
+                        DU_LOG("\nERROR  -->  E2AP : %s: Action ID [%d] not found", __func__, actionId);
+                     }
+                     else
+                     {
+                        cmLListDelFrm(&ricSubsDb->actionSequence, actionNode);
+                        deleteActionSequence(actionNode);
+                        actionDb =NULLP;
+                        /* Further handling can include :
+                         * Deletion of this action from all DU layers 
+                         */
+                     }
+                     actionDb = NULLP;
+                  }
+                  break;
+               }
+
+            case ProtocolIE_IDE2_id_RICactionsRefusedToBeRemoved_List:
+               {
+                  rmvFailList = &ricSubsModCfmIe->value.choice.RICactions_RefusedToBeRemoved_List;
+                  for(arrIdx = 0; arrIdx < rmvFailList->list.count; arrIdx++)
+                  {
+                     rmvFailListItem = (RICaction_RefusedToBeRemoved_ItemIEs_t *)rmvFailList->list.array[arrIdx];
+                     actionId = rmvFailListItem->value.choice.RICaction_RefusedToBeRemoved_Item.ricActionID;
+                     actionDb = fetchActionInfoFromActionId(actionId, ricSubsDb,  &actionNode, CONFIG_UNKNOWN);
+                     if(!actionDb)
+                     {
+                        DU_LOG("\nERROR  -->  E2AP : %s: Action ID [%d] not found", __func__, actionId);
+                     }
+                     else
+                     {
+                        actionDb->action = CONFIG_UNKNOWN;
+                     }
+                     actionDb = NULLP;
+                  }
+                  break;
+               }
+
+            default:
+               break;
+         } /* End of switch for Protocol IE Id */
+
+         if(procFailure)
+            break;
+      } /* End of for loop for Protocol IE list */
+
+      break;
+   }while(true);
+
+   freeAperDecodingOfRicSubsModConfirm(e2apMsg);
+   return;
+}
+
+/******************************************************************
+* @brief Deallocate the memory allocated for E2 Reset Response
+*
+* @details
+*
+*    Function : FreeE2ResetResponse
+*
+*    Functionality:
+*       - freeing the memory allocated for E2ResetResponse
+*
+* @params[in] E2AP_PDU_t *e2apMsg
+* @return ROK     - success
+*         RFAILED - failure
+*
+* ****************************************************************/
+void FreeE2ResetResponse(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx =0;
+   ResetResponseE2_t *resetResponse;
+
+   if(e2apMsg != NULLP)
+   {
+      if(e2apMsg->choice.successfulOutcome != NULLP)
+      {
+         resetResponse = &e2apMsg->choice.successfulOutcome->value.choice.ResetResponseE2;
+         if(resetResponse->protocolIEs.list.array)
+         {
+            for(ieIdx=0; ieIdx < resetResponse->protocolIEs.list.count; ieIdx++)
+            {
+               if(resetResponse->protocolIEs.list.array[ieIdx])
+               {
+                  DU_FREE(resetResponse->protocolIEs.list.array[ieIdx], sizeof(ResetResponseIEs_t));
+               }
+            }
+            DU_FREE(resetResponse->protocolIEs.list.array, resetResponse->protocolIEs.list.size);
+         }
+
+         DU_FREE(e2apMsg->choice.successfulOutcome, sizeof(SuccessfulOutcomeE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Buld and send the E2 Reset Response msg
+ *
+ * @details
+ *
+ *    Function : BuildAndSendE2ResetResponse
+ *
+ *    Functionality:
+ *         - Buld and send the E2 Reset Response Message
+ *
+ * @params[in] Trans Id
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+uint8_t BuildAndSendResetResponse(uint8_t transId)
+{
+   uint8_t           ieIdx = 0, elementCnt = 0;
+   uint8_t           ret = RFAILED;
+   E2AP_PDU_t        *e2apMsg = NULLP;
+   ResetResponseE2_t *resetResponse;
+   asn_enc_rval_t    encRetVal;       /* Encoder return value */
+
+   DU_LOG("\nINFO   -->  E2AP : Building E2 Reset Response Message\n");
+   do
+   {
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : BuildAndSendResetResponse(): Memory allocation for E2AP-PDU failed");
+         break;
+      }
+      e2apMsg->present = E2AP_PDU_PR_successfulOutcome;
+
+      DU_ALLOC(e2apMsg->choice.successfulOutcome, sizeof(SuccessfulOutcomeE2_t));
+      if(e2apMsg->choice.successfulOutcome == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : BuildAndSendResetResponse: Memory allocation failed for successfulOutcome");
+         break;
+      }
+
+      e2apMsg->choice.successfulOutcome->procedureCode = ProcedureCodeE2_id_Reset;
+      e2apMsg->choice.successfulOutcome->criticality = CriticalityE2_reject;
+      e2apMsg->choice.successfulOutcome->value.present = SuccessfulOutcomeE2__value_PR_ResetResponseE2;
+      resetResponse = &e2apMsg->choice.successfulOutcome->value.choice.ResetResponseE2;
+
+      elementCnt = 1;
+      resetResponse->protocolIEs.list.count = elementCnt;
+      resetResponse->protocolIEs.list.size = elementCnt * sizeof(ResetResponseIEs_t *);
+      DU_ALLOC(resetResponse->protocolIEs.list.array, resetResponse->protocolIEs.list.size);
+      if(!resetResponse->protocolIEs.list.array)
+      {
+         DU_LOG("\nERROR  -->  E2AP : BuildAndSendResetResponse: Memory allocation failed for protocol IE array");
+         break;
+      }
+
+      for(ieIdx=0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(resetResponse->protocolIEs.list.array[ieIdx], sizeof(ResetResponseIEs_t));
+         if(!resetResponse->protocolIEs.list.array[ieIdx])
+         {
+            DU_LOG("\nERROR  -->  E2AP : BuildAndSendResetResponse: Memory allocation failed for protocol IE array element");
+            break;
+         }
+      }
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      resetResponse->protocolIEs.list.array[ieIdx]->id =  ProtocolIE_IDE2_id_TransactionID;
+      resetResponse->protocolIEs.list.array[ieIdx]->criticality = CriticalityE2_reject;
+      resetResponse->protocolIEs.list.array[ieIdx]->value.present = ResetResponseIEs__value_PR_TransactionID;
+      resetResponse->protocolIEs.list.array[ieIdx]->value.choice.TransactionID = transId;
+
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf, encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode E2 reset response structure (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : Created APER encoded buffer for E2 Reset Response \n");
+         for(int i=0; i< encBufSize; i++)
+         {
+            DU_LOG("%x",encBuf[i]);
+         }
+      }
+
+      /* Sending msg */
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Failed to send E2 Reset Response");
+         break;
+      }
+
+      ret = ROK;
+      break;
+   }while(true);
+
+   FreeE2ResetResponse(e2apMsg);
+   return ret;
+}
+
+/******************************************************************
+ *
+ * @brief Deallocation of memory allocated by aper decoder for reset req
+ *
+ * @details
+ *
+ *    Function : freeAperDecodingOfE2ResetReq
+ *
+ *    Functionality: Deallocation of memory allocated by aper decoder for
+ *    reset req
+ *
+ * @params[in] Pointer to resetReq
+ * @return void
+ *
+ * ****************************************************************/
+void freeAperDecodingOfE2ResetReq(ResetRequestE2_t *resetReq)
+{
+   uint8_t arrIdx=0;
+
+   if(resetReq)
+   {
+      if(resetReq->protocolIEs.list.array)
+      {
+         for(arrIdx=0; arrIdx<resetReq->protocolIEs.list.count; arrIdx++)
+         {
+            if(resetReq->protocolIEs.list.array[arrIdx])
+            {
+               free(resetReq->protocolIEs.list.array[arrIdx]);
+            }
+         }
+         free(resetReq->protocolIEs.list.array);
+      }
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Process reset req received from RIC
+ *
+ * @details
+ *
+ *    Function : procE2ResetRequest
+ *
+ * Functionality: Process reset req received from RIC
+ *
+ * @param  E2AP_PDU_t  *e2apMsg
+ * @return void
+ *
+ ******************************************************************/
+
+void procE2ResetRequest(E2AP_PDU_t  *e2apMsg)
+{
+   uint16_t ranFuncIdx=0;
+   uint8_t arrIdx =0, transId =0;
+   ResetRequestE2_t *resetReq;
+
+   DU_LOG("\nINFO   -->  E2AP : E2 Reset request received");
+   resetReq = &e2apMsg->choice.initiatingMessage->value.choice.ResetRequestE2;
+
+   for(arrIdx=0; arrIdx<resetReq->protocolIEs.list.count; arrIdx++)
+   {
+      switch(resetReq->protocolIEs.list.array[arrIdx]->id)
+      {
+         case ProtocolIE_IDE2_id_TransactionID:
+            {
+               transId = resetReq->protocolIEs.list.array[arrIdx]->value.choice.TransactionID;
+               break;
+            }
+
+         case ProtocolIE_IDE2_id_CauseE2:
+            {
+               for(ranFuncIdx=0; ranFuncIdx<MAX_RAN_FUNCTION; ranFuncIdx++)
+               {
+                  if(duCb.e2apDb.ranFunction[ranFuncIdx].id >0)
+                  {
+                     deleteRicSubscriptionList(&(duCb.e2apDb.ranFunction[ranFuncIdx].subscriptionList));
+                     memset(&(duCb.e2apDb.ranFunction[ranFuncIdx].pendingSubsRspInfo), 0, MAX_PENDING_SUBSCRIPTION_RSP*sizeof(PendingSubsRspInfo));
+                  }
+               }
+               break;
+            }
+      }
+   }
+   if(BuildAndSendResetResponse(transId) != ROK)
+   {
+      DU_LOG("\nERROR  -->  E2AP : Failed to build and send reset response");
+   }
+   freeAperDecodingOfE2ResetReq(resetReq);
+}
+
+/*******************************************************************
+ *
+ * @brief Free APER decoding of RIC Subscription Modification Refuse
+ *
+ * @details
+ *
+ *    Function : freeAperDecodingOfRicSubsModRefuse
+ *
+ * Functionality:  Free APER decoding of RIC Subscription 
+ *   Modification Refuse
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+void freeAperDecodingOfRicSubsModRefuse(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx =0;
+   RICsubscriptionModificationRefuse_t *ricSubsModRefuse = NULLP;
+
+   if(e2apMsg && e2apMsg->choice.unsuccessfulOutcome)
+   {
+      ricSubsModRefuse = &e2apMsg->choice.unsuccessfulOutcome->value.choice.RICsubscriptionModificationRefuse;
+      if(ricSubsModRefuse->protocolIEs.list.array)
+      {
+         for(ieIdx = 0; ieIdx < ricSubsModRefuse->protocolIEs.list.count; ieIdx++)
+         {
+            if(ricSubsModRefuse->protocolIEs.list.array[ieIdx])
+               free(ricSubsModRefuse->protocolIEs.list.array[ieIdx]);
+         }
+         free(ricSubsModRefuse->protocolIEs.list.array);
+      }
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Process RIC Subscription Modification Refuse Message
+ *
+ * @details
+ *
+ *    Function : procRicSubscriptionModificationRefuse
+ *
+ * Functionality:  Process RIC Subscription Modification Refuse
+ *    Message received from RIC. 
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+void procRicSubscriptionModificationRefuse(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx = 0;
+   uint16_t ranFuncId = 0;
+   RicRequestId ricReqId;
+   RICsubscriptionModificationRefuse_t *ricSubsModRefuse = NULLP;
+   RICsubscriptionModificationRefuse_IEs_t *ricSubsModRefuseIe = NULLP;
+   CauseE2_t *cause = NULLP;
+
+   DU_LOG("\nINFO   -->  E2AP : %s: Received RIC Subscription Modification Refuse", __func__);
+
+   do{
+      if(!e2apMsg)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: E2AP Message is NULL", __func__);
+         break;
+      }
+
+      if(!e2apMsg->choice.unsuccessfulOutcome)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Unsuccessful Outcome in E2AP message is NULL", __func__);
+         break;
+      }
+
+      ricSubsModRefuse = &e2apMsg->choice.unsuccessfulOutcome->value.choice.RICsubscriptionModificationRefuse;
+      if(!ricSubsModRefuse->protocolIEs.list.array)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Array conatining E2AP message IEs is null", __func__);
+         break;
+      }
+
+      for(ieIdx = 0; ieIdx < ricSubsModRefuse->protocolIEs.list.count; ieIdx++)
+      {
+         if(!ricSubsModRefuse->protocolIEs.list.array[ieIdx])
+         {
+            DU_LOG("\nERROR  -->  E2AP : %s: IE at index [%d] in E2AP message IEs list is null", __func__, ieIdx);
+            break;
+         }
+
+         ricSubsModRefuseIe = ricSubsModRefuse->protocolIEs.list.array[ieIdx];
+         switch(ricSubsModRefuseIe->id)
+         {
+            case ProtocolIE_IDE2_id_RICrequestID:
+               {
+                  memset(&ricReqId, 0, sizeof(RicRequestId));
+                  ricReqId.requestorId = ricSubsModRefuseIe->value.choice.RICrequestID.ricRequestorID;
+                  ricReqId.instanceId = ricSubsModRefuseIe->value.choice.RICrequestID.ricInstanceID;
+                  break;
+               }
+
+            case ProtocolIE_IDE2_id_RANfunctionID:
+               {
+                  ranFuncId = ricSubsModRefuseIe->value.choice.RANfunctionID;
+                  break;
+               }
+
+            case ProtocolIE_IDE2_id_CauseE2:
+               {
+                  DU_LOG("\nDEBUG  -->  E2AP : %s: RIC subscriptiom modification refused for RIC_Requestor_ID [%d] \
+                        RIC_Instance_ID [%d] RAN_Function_ID [%d] ", __func__, ricReqId.requestorId, \
+                        ricReqId.instanceId, ranFuncId);
+
+                  cause = &ricSubsModRefuseIe->value.choice.CauseE2;
+                  printE2ErrorCause(cause);
+               }
+
+            default:
+               break;
+         } /* End of switch for Protocol IE Id */
+      } /* End of for loop for Protocol IE list */
+
+      break;
+   }while(true);
+
+   freeAperDecodingOfRicSubsModRefuse(e2apMsg);
+   return;
+}
+
+/*******************************************************************
+ *
+ * @brief Free RIC Subscription Delete Required Message
+ *
+ * @details
+ *
+ *    Function : FreeRicSubscriptionDeleteRequired
+ *
+ * Functionality:  Free RIC Subscription Delete Required
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+void FreeRicSubscriptionDeleteRequired(E2AP_PDU_t *e2apMsg, CmLListCp *ricSubsToBeDelList)
+{
+   uint8_t ieIdx = 0, arrIdx = 0;
+   RICsubscriptionDeleteRequired_t *ricSubsDelRqd = NULLP;
+   RICsubscriptionDeleteRequired_IEs_t *ricSubsDelRqdIe = NULLP;
+   RICsubscription_List_withCause_t *ricSubsList = NULLP;
+   CmLList *subsNode = NULLP;
+
+   if(e2apMsg)
+   {
+      if(e2apMsg->choice.initiatingMessage)
+      {
+         ricSubsDelRqd = &e2apMsg->choice.initiatingMessage->value.choice.RICsubscriptionDeleteRequired;
+         if(ricSubsDelRqd->protocolIEs.list.array)
+         {
+            for(ieIdx = 0; ieIdx < ricSubsDelRqd->protocolIEs.list.count; ieIdx++)
+            {
+               if(ricSubsDelRqd->protocolIEs.list.array[ieIdx])
+               {
+                  ricSubsDelRqdIe = ricSubsDelRqd->protocolIEs.list.array[ieIdx];
+                  switch(ricSubsDelRqdIe->id)
+                  {
+                     case ProtocolIE_IDE2_id_RICsubscriptionToBeRemoved:
+                        {
+                           ricSubsList = &ricSubsDelRqdIe->value.choice.RICsubscription_List_withCause;
+                           if(ricSubsList->list.array)
+                           {
+                              for(arrIdx = 0; arrIdx < ricSubsList->list.count; arrIdx++)
+                              {
+                                 DU_FREE(ricSubsList->list.array[ieIdx], sizeof(RICsubscription_withCause_ItemIEs_t));
+                              }
+                              DU_FREE(ricSubsList->list.array, ricSubsList->list.size);
+                           }
+                           break;
+                        }
+                  }
+                  DU_FREE(ricSubsDelRqd->protocolIEs.list.array[ieIdx], sizeof(RICsubscriptionDeleteRequired_IEs_t));
+               }
+            }
+            DU_FREE(ricSubsDelRqd->protocolIEs.list.array, ricSubsDelRqd->protocolIEs.list.size);
+         }
+         DU_FREE(e2apMsg->choice.initiatingMessage, sizeof(InitiatingMessageE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));;
+   }
+
+   if(ricSubsToBeDelList)
+   {
+      CM_LLIST_FIRST_NODE(ricSubsToBeDelList, subsNode);
+      while(subsNode)
+      {
+         cmLListDelFrm(ricSubsToBeDelList, subsNode);
+         DU_FREE(subsNode, sizeof(CmLList));
+         CM_LLIST_FIRST_NODE(ricSubsToBeDelList, subsNode);
+      }
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Fill list of RIC subscriptions required to be deleted
+ *    with the cause of deletion
+ *
+ * @details
+ *
+ *    Function : fillRicSubsListWithCause
+ *
+ * Functionality:  Fill list of RIC subscriptions required to be 
+ *    deleted with the cause of deletion
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+uint8_t fillRicSubsListWithCause(RICsubscription_List_withCause_t *ricSubsList, CmLListCp ricSubsToBeDelList)
+{
+   uint16_t ieIdx = 0;
+   CmLList *subsNode = NULLP;
+   RicSubscription *subsInfo = NULLP;
+   RICsubscription_withCause_ItemIEs_t *subsItemIe = NULLP;
+   RICsubscription_withCause_Item_t *subsItem = NULLP;
+
+   ricSubsList->list.count = ricSubsToBeDelList.count;
+   ricSubsList->list.size = ricSubsList->list.count * sizeof(RICsubscription_withCause_ItemIEs_t *);
+   DU_ALLOC(ricSubsList->list.array, ricSubsList->list.size);
+   if(!ricSubsList->list.array)
+   {
+      DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+      return RFAILED;
+   }
+
+   CM_LLIST_FIRST_NODE(&ricSubsToBeDelList, subsNode);
+   while(subsNode && (ieIdx < ricSubsList->list.count))
+   {
+      subsInfo = (RicSubscription *)subsNode->node;
+      DU_ALLOC(ricSubsList->list.array[ieIdx], sizeof(RICsubscription_withCause_ItemIEs_t));
+      if(!ricSubsList->list.array[ieIdx])
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         return RFAILED;
+      }
+
+      subsItemIe = (RICsubscription_withCause_ItemIEs_t *)ricSubsList->list.array[ieIdx];
+      subsItemIe->id = ProtocolIE_IDE2_id_RICsubscription_withCause_Item;
+      subsItemIe->criticality = CriticalityE2_ignore;
+      subsItemIe->value.present = RICsubscription_withCause_ItemIEs__value_PR_RICsubscription_withCause_Item;
+
+      subsItem = & subsItemIe->value.choice.RICsubscription_withCause_Item;
+      subsItem->ricRequestID.ricRequestorID = subsInfo->requestId.requestorId;
+      subsItem->ricRequestID.ricInstanceID = subsInfo->requestId.instanceId;
+      subsItem->ranFunctionID = subsInfo->ranFuncId;
+      fillE2Cause(&subsItem->cause, subsInfo->failureCause);
+
+      ieIdx++;
+      subsNode = subsNode->next;
+   }
+
+   return ROK;   
+}
+
+/*******************************************************************
+ *
+ * @brief Builds and Send RIC Subscription delete required
+ *
+ * @details
+ *
+ *    Function : BuildAndSendRicSubscriptionDeleteRequired
+ *
+ * Functionality: Build and send RIC subscription delete required.
+ *    There can be 2 approaches to trigger following. One of these
+ *    approaches may/may not be implemented in future:
+ *    1. It can be triggerred immediately when a RIC subscription's
+ *       End Time has expired. In this case, only this subscription's
+ *       info will be sent in this message.
+ *       Since we have not yet added support to execute RIC 
+ *       Subscription based on Start Time and End Timer, this message is 
+ *       not triggered anywhere from DU APP yet.
+ *    2. Another approach is to have a periodic timer to check subscription
+ *       status running in background.
+ *       When RIC Subscription End Time expires, this subscription is
+ *       marked to be deleted. Later when this background timer expires,
+ *       a RIC Subscription delete required is sent with all the 
+ *       subscription's info which is marked to be deleted.
+ *    The following function is implemented keeping in mind the second 
+ *    approach.
+ *
+ * @params[in] 
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+uint8_t BuildAndSendRicSubscriptionDeleteRequired()
+{
+   uint8_t elementCnt = 0, ieIdx = 0, ret = RFAILED;
+   E2AP_PDU_t         *e2apMsg = NULLP;
+   RICsubscriptionDeleteRequired_t *ricSubsDelRqd = NULLP;
+   RICsubscriptionDeleteRequired_IEs_t *ricSubsDelRqdIe = NULLP;
+   asn_enc_rval_t     encRetVal;        /* Encoder return value */
+   CmLListCp ricSubsToBeDelList;
+
+   while(true)
+   {
+      /* Check if there are any RIC subscriptions to be deleted */
+      cmLListInit(&ricSubsToBeDelList);
+      fetchRicSubsToBeDeleted(&ricSubsToBeDelList);
+      if(ricSubsToBeDelList.count == 0)
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : %s: No RIC subscriptions are required to be deleted", __func__);
+         return ROK;
+      }
+
+      DU_LOG("\nINFO   -->  E2AP : Building RIC Subscription Delete Required Message\n");
+
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->present = E2AP_PDU_PR_initiatingMessage;
+      DU_ALLOC(e2apMsg->choice.initiatingMessage, sizeof(InitiatingMessageE2_t));
+      if(e2apMsg->choice.initiatingMessage == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         break;
+      }
+      e2apMsg->choice.initiatingMessage->procedureCode = ProcedureCodeE2_id_RICsubscriptionDeleteRequired;
+      e2apMsg->choice.initiatingMessage->criticality = CriticalityE2_reject;
+      e2apMsg->choice.initiatingMessage->value.present = InitiatingMessageE2__value_PR_RICsubscriptionDeleteRequired;
+
+      ricSubsDelRqd = &e2apMsg->choice.initiatingMessage->value.choice.RICsubscriptionDeleteRequired;
+      
+      elementCnt = 1;
+      ricSubsDelRqd->protocolIEs.list.count = elementCnt;
+      ricSubsDelRqd->protocolIEs.list.size = elementCnt * sizeof(RICsubscriptionDeleteRequired_IEs_t *);
+
+      DU_ALLOC(ricSubsDelRqd->protocolIEs.list.array, ricSubsDelRqd->protocolIEs.list.size);
+      if(ricSubsDelRqd->protocolIEs.list.array == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation failed for array elements at line %d",__func__, __LINE__);
+         break;
+      }
+      
+      for(ieIdx = 0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(ricSubsDelRqd->protocolIEs.list.array[ieIdx], sizeof(RICsubscriptionDeleteRequired_IEs_t));
+         if(ricSubsDelRqd->protocolIEs.list.array[ieIdx] == NULLP)
+         {
+            DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation failed for index [%d] at line %d", \
+               __func__, ieIdx, __LINE__);
+            break;
+         }
+      }
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      ricSubsDelRqdIe = ricSubsDelRqd->protocolIEs.list.array[ieIdx];
+      ricSubsDelRqdIe->id = ProtocolIE_IDE2_id_RICsubscriptionToBeRemoved;
+      ricSubsDelRqdIe->criticality = CriticalityE2_ignore;
+      ricSubsDelRqdIe->value.present = RICsubscriptionDeleteRequired_IEs__value_PR_RICsubscription_List_withCause;
+      if(fillRicSubsListWithCause(&ricSubsDelRqdIe->value.choice.RICsubscription_List_withCause, ricSubsToBeDelList)\
+            != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Failed to fill RIC Subscription list with cause", __func__);
+         break;
+      }
+
+      /* Prints the Msg formed */
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf, encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode RIC Subscription Delete Required Message (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : Created APER encoded buffer for RIC Subscription Delete Required Message \n");
+#ifdef DEBUG_ASN_PRINT
+         for(int i=0; i< encBufSize; i++)
+         {
+            printf("%x",encBuf[i]);
+         } 
+#endif
+      }
+
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR   -->  E2AP : Failed to send RIC Susbcription Delete Required Message");      
+
+      }
+      ret = ROK;
+      break;
+   }
+
+   FreeRicSubscriptionDeleteRequired(e2apMsg, &ricSubsToBeDelList);	
+   return ret;
+}
+
+/*******************************************************************
+ *
+ * @brief Free RIC Subscription Delete Failure Message
+ *
+ * @details
+ *
+ *    Function : FreeRicSubscriptionDeleteFailure
+ *
+ * Functionality:  Free RIC Subscription Delete Failure
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+void FreeRicSubscriptionDeleteFailure(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx = 0;
+   RICsubscriptionDeleteFailure_t *ricSubsDelFailure = NULLP;
+
+   if(e2apMsg)
+   {
+      if(e2apMsg->choice.unsuccessfulOutcome)
+      {
+         ricSubsDelFailure = &e2apMsg->choice.unsuccessfulOutcome->value.choice.RICsubscriptionDeleteFailure;
+         if(ricSubsDelFailure->protocolIEs.list.array)
+         {
+            for(ieIdx = 0; ieIdx < ricSubsDelFailure->protocolIEs.list.count; ieIdx++)
+            {
+               DU_FREE(ricSubsDelFailure->protocolIEs.list.array[ieIdx], sizeof(RICsubscriptionDeleteFailure_IEs_t));
+            }
+            DU_FREE(ricSubsDelFailure->protocolIEs.list.array, ricSubsDelFailure->protocolIEs.list.size);
+         }
+         DU_FREE(e2apMsg->choice.unsuccessfulOutcome, sizeof(UnsuccessfulOutcomeE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));;
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Builds and Send RIC Subscription Delete Failure
+ *
+ * @details
+ *
+ *    Function : BuildAndSendRicSubscriptionDeleteFailure
+ *
+ * Functionality: Build and send RIC Subscription Delete Failure.
+ *
+ * @params[in] 
+ *          Ran Func Id
+ *          Ric Req Id
+ *          E2 failure cause
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+uint8_t BuildAndSendRicSubscriptionDeleteFailure(uint16_t ranFuncId,  RicRequestId requestId, E2FailureCause failureCause)
+{
+   uint8_t elementCnt = 0, ieIdx = 0, ret = RFAILED;
+   E2AP_PDU_t         *e2apMsg = NULLP;
+   RICsubscriptionDeleteFailure_t *ricSubsDelFailure = NULLP;
+   RICsubscriptionDeleteFailure_IEs_t *ricSubsDelFailureIe = NULLP;
+   asn_enc_rval_t     encRetVal;        /* Encoder return value */
+
+   while(true)
+   {
+      DU_LOG("\nINFO   -->  E2AP : Building RIC Subscription Delete Failure Message\n");
+
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->present = E2AP_PDU_PR_unsuccessfulOutcome;
+      DU_ALLOC(e2apMsg->choice.unsuccessfulOutcome, sizeof(UnsuccessfulOutcomeE2_t));
+      if(e2apMsg->choice.unsuccessfulOutcome == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         break;
+      }
+      e2apMsg->choice.unsuccessfulOutcome->procedureCode = ProcedureCodeE2_id_RICsubscriptionDelete;
+      e2apMsg->choice.unsuccessfulOutcome->criticality = CriticalityE2_reject;
+      e2apMsg->choice.unsuccessfulOutcome->value.present = UnsuccessfulOutcomeE2__value_PR_RICsubscriptionDeleteFailure;
+
+
+      ricSubsDelFailure = &e2apMsg->choice.unsuccessfulOutcome->value.choice.RICsubscriptionDeleteFailure;
+
+      elementCnt = 3;
+      ricSubsDelFailure->protocolIEs.list.count = elementCnt;
+      ricSubsDelFailure->protocolIEs.list.size = elementCnt * sizeof(RICsubscriptionDeleteFailure_IEs_t *);
+
+      DU_ALLOC(ricSubsDelFailure->protocolIEs.list.array, ricSubsDelFailure->protocolIEs.list.size);
+      if(ricSubsDelFailure->protocolIEs.list.array == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation failed for array elements at line %d",__func__, __LINE__);
+         break;
+      }
+
+      for(ieIdx = 0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(ricSubsDelFailure->protocolIEs.list.array[ieIdx], sizeof(RICsubscriptionDeleteFailure_IEs_t));
+         if(ricSubsDelFailure->protocolIEs.list.array[ieIdx] == NULLP)
+         {
+            DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation failed for index [%d] at line %d", \
+                  __func__, ieIdx, __LINE__);
+            break;
+         }
+      }
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      ricSubsDelFailureIe = ricSubsDelFailure->protocolIEs.list.array[ieIdx];
+      ricSubsDelFailureIe->id = ProtocolIE_IDE2_id_RICrequestID;
+      ricSubsDelFailureIe->criticality = CriticalityE2_reject;
+      ricSubsDelFailureIe->value.present = RICsubscriptionDeleteFailure_IEs__value_PR_RICrequestID;
+      ricSubsDelFailureIe->value.choice.RICrequestID.ricRequestorID= requestId.requestorId;
+      ricSubsDelFailureIe->value.choice.RICrequestID.ricInstanceID = requestId.instanceId;
+
+      ieIdx++;
+      ricSubsDelFailureIe = ricSubsDelFailure->protocolIEs.list.array[ieIdx];
+      ricSubsDelFailureIe->id = ProtocolIE_IDE2_id_RANfunctionID;
+      ricSubsDelFailureIe->criticality = CriticalityE2_reject;
+      ricSubsDelFailureIe->value.present = RICsubscriptionDeleteFailure_IEs__value_PR_RANfunctionID;
+      ricSubsDelFailureIe->value.choice.RANfunctionID = ranFuncId;
+      
+      ieIdx++;
+      ricSubsDelFailureIe = ricSubsDelFailure->protocolIEs.list.array[ieIdx];
+      ricSubsDelFailureIe->id = ProtocolIE_IDE2_id_CauseE2;
+      ricSubsDelFailureIe->criticality = CriticalityE2_ignore;
+      ricSubsDelFailureIe->value.present = RICsubscriptionDeleteFailure_IEs__value_PR_CauseE2;
+      fillE2Cause(&ricSubsDelFailureIe->value.choice.CauseE2, failureCause);
+
+      /* Prints the Msg formed */
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf, encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode RIC Subscription Delete Failure Message (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : Created APER encoded buffer for RIC Subscription Delete Failure Message \n");
+#ifdef DEBUG_ASN_PRINT
+         for(int i=0; i< encBufSize; i++)
+         {
+            printf("%x",encBuf[i]);
+         }
+#endif
+      }
+
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR   -->  E2AP : Failed to send RIC Susbcription Delete Failure Message");
+         break;
+      }
+
+      ret = ROK;
+      break;
+   }
+
+   FreeRicSubscriptionDeleteFailure(e2apMsg);
+   return ret;
+}
+
+
+/*******************************************************************
+ *
+ * @brief Free RIC Subscription Delete Response Message
+ *
+ * @details
+ *
+ *    Function : FreeRicSubscriptionDeleteResponse
+ *
+ * Functionality:  Free RIC Subscription Delete Response
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+void FreeRicSubscriptionDeleteResponse(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx = 0;
+   RICsubscriptionDeleteResponse_t *ricSubsDelRsp = NULLP;
+
+   if(e2apMsg)
+   {
+      if(e2apMsg->choice.successfulOutcome)
+      {
+         ricSubsDelRsp = &e2apMsg->choice.successfulOutcome->value.choice.RICsubscriptionDeleteResponse;
+         if(ricSubsDelRsp->protocolIEs.list.array)
+         {
+            for(ieIdx = 0; ieIdx < ricSubsDelRsp->protocolIEs.list.count; ieIdx++)
+            {
+               DU_FREE(ricSubsDelRsp->protocolIEs.list.array[ieIdx], sizeof(RICsubscriptionDeleteResponse_IEs_t));
+            }
+            DU_FREE(ricSubsDelRsp->protocolIEs.list.array, ricSubsDelRsp->protocolIEs.list.size);
+         }
+         DU_FREE(e2apMsg->choice.successfulOutcome, sizeof(SuccessfulOutcomeE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));;
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Builds and Send RIC Subscription delete Response
+ *
+ * @details
+ *
+ *    Function : BuildAndSendRicSubscriptionDeleteResponse
+ *
+ * Functionality: Build and send RIC subscription delete Response.
+ *
+ * @params[in]
+ *          Ran Func Id
+ *          Ric Req Id
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+uint8_t BuildAndSendRicSubscriptionDeleteResponse(uint16_t ranFuncId,  RicRequestId requestId)
+{
+   uint8_t elementCnt = 0, ieIdx = 0, ret = RFAILED;
+   E2AP_PDU_t         *e2apMsg = NULLP;
+   RICsubscriptionDeleteResponse_t *ricSubsDelRsp = NULLP;
+   RICsubscriptionDeleteResponse_IEs_t *ricSubsDelRspIe = NULLP;
+   asn_enc_rval_t     encRetVal;        /* Encoder return value */
+
+   while(true)
+   {
+      DU_LOG("\nINFO   -->  E2AP : Building RIC Subscription Delete Response Message\n");
+
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->present = E2AP_PDU_PR_successfulOutcome;
+      DU_ALLOC(e2apMsg->choice.successfulOutcome, sizeof(SuccessfulOutcomeE2_t));
+      if(e2apMsg->choice.successfulOutcome == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         break;
+      }
+      e2apMsg->choice.successfulOutcome->procedureCode = ProcedureCodeE2_id_RICsubscriptionDelete;
+      e2apMsg->choice.successfulOutcome->criticality = CriticalityE2_reject;
+      e2apMsg->choice.successfulOutcome->value.present = SuccessfulOutcomeE2__value_PR_RICsubscriptionDeleteResponse;
+
+
+      ricSubsDelRsp = &e2apMsg->choice.successfulOutcome->value.choice.RICsubscriptionDeleteResponse;
+
+      elementCnt = 2;
+      ricSubsDelRsp->protocolIEs.list.count = elementCnt;
+      ricSubsDelRsp->protocolIEs.list.size = elementCnt * sizeof(RICsubscriptionDeleteResponse_IEs_t *);
+
+      DU_ALLOC(ricSubsDelRsp->protocolIEs.list.array, ricSubsDelRsp->protocolIEs.list.size);
+      if(ricSubsDelRsp->protocolIEs.list.array == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation failed for array elements at line %d",__func__, __LINE__);
+         break;
+      }
+
+      for(ieIdx = 0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(ricSubsDelRsp->protocolIEs.list.array[ieIdx], sizeof(RICsubscriptionDeleteResponse_IEs_t));
+         if(ricSubsDelRsp->protocolIEs.list.array[ieIdx] == NULLP)
+         {
+            DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation failed for index [%d] at line %d", \
+                  __func__, ieIdx, __LINE__);
+            break;
+         }
+      }
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      ricSubsDelRspIe = ricSubsDelRsp->protocolIEs.list.array[ieIdx];
+      ricSubsDelRspIe->id = ProtocolIE_IDE2_id_RICrequestID;
+      ricSubsDelRspIe->criticality = CriticalityE2_reject;
+      ricSubsDelRspIe->value.present = RICsubscriptionDeleteResponse_IEs__value_PR_RICrequestID;
+      ricSubsDelRspIe->value.choice.RICrequestID.ricRequestorID= requestId.requestorId;
+      ricSubsDelRspIe->value.choice.RICrequestID.ricInstanceID = requestId.instanceId;
+
+      ieIdx++;
+      ricSubsDelRspIe = ricSubsDelRsp->protocolIEs.list.array[ieIdx];
+      ricSubsDelRspIe->id = ProtocolIE_IDE2_id_RANfunctionID;
+      ricSubsDelRspIe->criticality = CriticalityE2_reject;
+      ricSubsDelRspIe->value.present = RICsubscriptionDeleteResponse_IEs__value_PR_RANfunctionID;
+      ricSubsDelRspIe->value.choice.RANfunctionID = ranFuncId;
+
+      /* Prints the Msg formed */
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf, encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode RIC Subscription Delete Response Message (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : Created APER encoded buffer for RIC Subscription Delete Response Message \n");
+#ifdef DEBUG_ASN_PRINT
+         for(int i=0; i< encBufSize; i++)
+         {
+            printf("%x",encBuf[i]);
+         }
+#endif
+      }
+
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR   -->  E2AP : Failed to send RIC Susbcription Delete Response Message");
+         break;
+      }
+
+      ret = ROK;
+      break;
+   }
+
+   FreeRicSubscriptionDeleteResponse(e2apMsg);
+   return ret;
+}
+
+/*******************************************************************
+ *
+ * @brief Free RIC Subscription Delete Request Message
+ *
+ * @details
+ *
+ *    Function : freeAperDecodingOfRicSubsDeleteReq
+ *
+ * Functionality:  Free RIC Subscription Delete Request
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+void freeAperDecodingOfRicSubsDeleteReq(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx = 0;
+   RICsubscriptionDeleteRequest_t *ricSubsDelReq = NULLP;
+
+   if(e2apMsg)
+   {
+      if(e2apMsg->choice.initiatingMessage)
+      {
+         ricSubsDelReq = &e2apMsg->choice.initiatingMessage->value.choice.RICsubscriptionDeleteRequest;
+         if(ricSubsDelReq->protocolIEs.list.array)
+         {
+            for(ieIdx = 0; ieIdx < ricSubsDelReq->protocolIEs.list.count; ieIdx++)
+            {
+               if(ricSubsDelReq->protocolIEs.list.array[ieIdx])
+               {
+                  free(ricSubsDelReq->protocolIEs.list.array[ieIdx]);
+               }
+            }
+            free(ricSubsDelReq->protocolIEs.list.array);
+         }
+      }
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Process RIC Subscription delete request
+ *
+ * @details
+ *
+ *    Function : procRicSubscriptionDeleteRequest
+ *
+ * Functionality: Process RIC subscription delete request.
+ *    Fetch RAN Function and RIC subscription to be deleted. 
+ *    Send statistics delete request to MAC for all action sequence
+ *    within this RIC subscription.
+ *
+ * @params[in] E2AP PDU
+ * @return void
+ *
+ ******************************************************************/
+void procRicSubscriptionDeleteRequest(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx = 0;
+   uint16_t ranFuncId = 0;
+   bool procFailure = false;
+   RicRequestId ricReqId;
+   RanFunction *ranFuncDb = NULLP;
+   CmLList *ricSubsNode = NULLP;
+   RicSubscription *ricSubsDb = NULLP;
+   RICsubscriptionDeleteRequest_t *ricSubsDelReq = NULLP;
+   RICsubscriptionDeleteRequest_IEs_t *ricSubsDelReqIe = NULLP;
+
+   DU_LOG("\nINFO   -->  E2AP : %s: Received RIC Subscription Delete Request", __func__);
+
+   do{
+      if(!e2apMsg)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: E2AP Message is NULL", __func__);
+         break;
+      }
+
+      if(!e2apMsg->choice.initiatingMessage)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Initiating Message in E2AP PDU is NULL", __func__);
+         break;
+      }
+
+      ricSubsDelReq = &e2apMsg->choice.initiatingMessage->value.choice.RICsubscriptionDeleteRequest;
+      if(!ricSubsDelReq->protocolIEs.list.array)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Array conatining E2AP message IEs is null", __func__);
+         break;
+      }
+
+      for(ieIdx = 0; ieIdx < ricSubsDelReq->protocolIEs.list.count; ieIdx++)
+      {
+         if(!ricSubsDelReq->protocolIEs.list.array[ieIdx])
+         {
+            DU_LOG("\nERROR  -->  E2AP : %s: IE at index [%d] in E2AP message IEs list is null", __func__, ieIdx);
+            break;
+         }
+
+         ricSubsDelReqIe = ricSubsDelReq->protocolIEs.list.array[ieIdx];
+         switch(ricSubsDelReqIe->id)
+         {
+            case ProtocolIE_IDE2_id_RICrequestID:
+               {
+                  memset(&ricReqId, 0, sizeof(RicRequestId));
+                  ricReqId.requestorId = ricSubsDelReqIe->value.choice.RICrequestID.ricRequestorID;
+                  ricReqId.instanceId = ricSubsDelReqIe->value.choice.RICrequestID.ricInstanceID;
+                  break;
+               }
+
+            case ProtocolIE_IDE2_id_RANfunctionID:
+               {
+                  ranFuncId = ricSubsDelReqIe->value.choice.RANfunctionID;
+                  ranFuncDb = fetchRanFuncFromRanFuncId(ranFuncId);
+                  if(!ranFuncDb)
+                  {
+                     DU_LOG("\nERROR  -->  E2AP : %s: RAN Function ID [%d] not found", __func__, ranFuncId);
+                     procFailure = true;
+                     break;
+                  }
+
+                  ricSubsDb = fetchSubsInfoFromRicReqId(ricReqId, ranFuncDb, &ricSubsNode); 
+                  if(!ricSubsDb)
+                  {
+                     DU_LOG("\nERROR  -->  E2AP : %s: RIC Subscription not found for Requestor_ID [%d] Instance_ID [%d]",\
+                           __func__, ricReqId.requestorId, ricReqId.instanceId);
+                     procFailure = true;
+                     break;
+                  }
+
+                  if(BuildAndSendStatsDeleteReq(ricSubsDb, true) != ROK)
+                  {
+                     DU_LOG("\nERROR  -->  E2AP : Failed to build and send ric subscription delete req to du layers");
+                  }
+                  break;
+               }
+
+            default:
+               break;
+         } /* End of switch for Protocol IE Id */
+         
+         if(procFailure)
+            break;
+      } /* End of for loop for Protocol IE list */
+
+      break;
+   }while(true);
+
+   freeAperDecodingOfRicSubsDeleteReq(e2apMsg);
+   return;
+}
+
+/*******************************************************************
+ *
+ * @brief Deallocate the memory allocated for E2 node configuration
+ * update ack msg by aper decoder
+ *
+ * @details
+ *
+ *    Function : freeAperDecodingOfE2NodeConfigUpdateAck 
+ *
+ *    Functionality:
+ *       - Deallocate the memory allocated for E2 node configuration
+ * update ack msg by aper decoder
+ *
+ * @params[in] E2AP_PDU_t *e2apMsg
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+
+void freeAperDecodingOfE2NodeConfigUpdateAck(E2nodeConfigurationUpdateAcknowledge_t *updateAckMsg)
+{
+   uint8_t arrIdx =0, e2NodeConfigIdx=0;
+   E2nodeComponentConfigUpdateAck_ItemIEs_t *updateAckItemIe=NULL;
+   E2nodeComponentConfigUpdateAck_List_t *updateAckList=NULL;
+   E2nodeComponentConfigRemovalAck_ItemIEs_t *removalAckItemIe=NULL;
+   E2nodeComponentConfigRemovalAck_List_t *removalAckList=NULL;
+   E2nodeComponentConfigAdditionAck_ItemIEs_t *additionAckItemIte=NULL;
+   E2nodeComponentConfigAdditionAck_List_t *additionAckList=NULL;
+
+   E2nodeComponentInterfaceF1_t *f1InterfaceInfo=NULLP;
+   if(updateAckMsg->protocolIEs.list.array != NULLP)
+   {
+      for(arrIdx = 0; arrIdx < updateAckMsg->protocolIEs.list.count; arrIdx++)
+      {
+         if(updateAckMsg->protocolIEs.list.array[arrIdx])
+         {
+            switch(updateAckMsg->protocolIEs.list.array[arrIdx]->id)
+            {
+               case ProtocolIE_IDE2_id_E2nodeComponentConfigAdditionAck:
+                  {
+                     additionAckList =&updateAckMsg->protocolIEs.list.array[arrIdx]->value.choice.E2nodeComponentConfigAdditionAck_List;
+                     if(additionAckList->list.array)
+                     {
+                        for(e2NodeConfigIdx=0; e2NodeConfigIdx<additionAckList->list.count; e2NodeConfigIdx++)
+                        {
+                           additionAckItemIte = (E2nodeComponentConfigAdditionAck_ItemIEs_t*) additionAckList->list.array[e2NodeConfigIdx];
+                           if(additionAckItemIte)
+                           {
+                              switch(additionAckItemIte->value.choice.E2nodeComponentConfigAdditionAck_Item.e2nodeComponentID.present)
+                              {
+                                 case E2nodeComponentID_PR_e2nodeComponentInterfaceTypeF1:
+                                    {
+                                       f1InterfaceInfo = additionAckItemIte->value.choice.E2nodeComponentConfigAdditionAck_Item.e2nodeComponentID.choice.e2nodeComponentInterfaceTypeF1;
+                                       free(f1InterfaceInfo->gNB_DU_ID.buf);
+                                       free(f1InterfaceInfo);
+                                       break;
+                                    }
+                                 default:
+                                    break;
+                              }
+                              free(additionAckItemIte);
+                           }
+                           free(additionAckList->list.array);
+                        }
+                        break;
+                     }
+                  }
+               case ProtocolIE_IDE2_id_E2nodeComponentConfigUpdateAck:
+                  {
+                     updateAckList =&updateAckMsg->protocolIEs.list.array[arrIdx]->value.choice.E2nodeComponentConfigUpdateAck_List;
+                     if(updateAckList->list.array)
+                     {
+                        for(e2NodeConfigIdx=0; e2NodeConfigIdx<updateAckList->list.count; e2NodeConfigIdx++)
+                        {
+                           updateAckItemIe = (E2nodeComponentConfigUpdateAck_ItemIEs_t*) updateAckList->list.array[e2NodeConfigIdx];
+                           if(updateAckItemIe)
+                           {
+                              switch(updateAckItemIe->value.choice.E2nodeComponentConfigUpdateAck_Item.e2nodeComponentID.present)
+                              {
+                                 case E2nodeComponentID_PR_e2nodeComponentInterfaceTypeF1:
+                                    {
+                                       f1InterfaceInfo = updateAckItemIe->value.choice.E2nodeComponentConfigUpdateAck_Item.e2nodeComponentID.choice.e2nodeComponentInterfaceTypeF1;
+                                       free(f1InterfaceInfo->gNB_DU_ID.buf);
+                                       free(f1InterfaceInfo);
+                                       break;
+                                    }
+                                 default:
+                                    break;
+                              }
+                              free(updateAckItemIe);
+                           }
+                        }
+                        free(updateAckList->list.array);
+                     }
+                     break;
+                  }
+               case ProtocolIE_IDE2_id_E2nodeComponentConfigRemovalAck:
+                  {
+                     removalAckList =&updateAckMsg->protocolIEs.list.array[arrIdx]->value.choice.E2nodeComponentConfigRemovalAck_List;
+                     if(removalAckList->list.array)
+                     {
+                        for(e2NodeConfigIdx=0; e2NodeConfigIdx<removalAckList->list.count; e2NodeConfigIdx++)
+                        {
+                           removalAckItemIe = (E2nodeComponentConfigRemovalAck_ItemIEs_t*) removalAckList->list.array[e2NodeConfigIdx];
+                           if(removalAckItemIe)
+                           {
+                              switch(removalAckItemIe->value.choice.E2nodeComponentConfigRemovalAck_Item.e2nodeComponentID.present)
+                              {
+                                 case E2nodeComponentID_PR_e2nodeComponentInterfaceTypeF1:
+                                    {
+                                       f1InterfaceInfo = removalAckItemIe->value.choice.E2nodeComponentConfigRemovalAck_Item.e2nodeComponentID.choice.e2nodeComponentInterfaceTypeF1;
+                                       free(f1InterfaceInfo->gNB_DU_ID.buf);
+                                       free(f1InterfaceInfo);
+                                       break;
+                                    }
+                                 default:
+                                    break;
+                              }
+                              free(removalAckItemIe);
+                           }
+                        }
+                        free(removalAckList->list.array);
+                     }
+                     break;
+                  }
+            }
+            free(updateAckMsg->protocolIEs.list.array[arrIdx]);
+         }
+      }
+      free(updateAckMsg->protocolIEs.list.array);
+   }
+}
+
+/******************************************************************
+ *
+ * @brief Processes the E2 node config update ack msg
+ *
+ * @details
+ *
+ *    Function :procE2NodeConfigUpdateAck 
+ *
+ *    Functionality: Processes the E2 node config update ack msg
+ *
+ * @params[in] E2AP_PDU_t ASN decoded E2AP message
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+
+void procE2NodeConfigUpdateAck(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t arrIdx =0;
+   uint16_t e2CfgIdx =0;
+   E2nodeConfigurationUpdateAcknowledge_t *e2NodeConfigUpdateAck =NULLP;
+   E2nodeComponentConfigUpdateAck_List_t *e2NodeConfigUpdateAckList=NULLP;
+   E2nodeComponentConfigUpdateAck_ItemIEs_t *e2NodeUpdateAckItem=NULLP;
+   E2nodeComponentConfigRemovalAck_List_t *e2NodeConfigRemovalAckList=NULLP;
+   E2nodeComponentConfigRemovalAck_ItemIEs_t *e2NodeRemovalAckItem=NULLP;
+   E2nodeComponentConfigAdditionAck_List_t *e2NodeConfigAdditionAckList=NULLP;
+   E2nodeComponentConfigAdditionAck_ItemIEs_t *e2NodeAdditionAckItem=NULLP;
+
+   e2NodeConfigUpdateAck = &e2apMsg->choice.successfulOutcome->value.choice.E2nodeConfigurationUpdateAcknowledge;
+
+   if(e2NodeConfigUpdateAck->protocolIEs.list.array)
+   {
+       for(arrIdx =0; arrIdx<e2NodeConfigUpdateAck->protocolIEs.list.count; arrIdx++)
+       {
+            switch(e2NodeConfigUpdateAck->protocolIEs.list.array[arrIdx]->id)
+            {
+               case ProtocolIE_IDE2_id_TransactionID:
+               {
+                  break;
+               }
+               case ProtocolIE_IDE2_id_E2nodeComponentConfigAdditionAck:
+               {
+                  e2NodeConfigAdditionAckList = &e2NodeConfigUpdateAck->protocolIEs.list.array[arrIdx]->value.choice.E2nodeComponentConfigAdditionAck_List;
+                  if(e2NodeConfigAdditionAckList->list.array)
+                  {
+                     for(e2CfgIdx = 0; e2CfgIdx< e2NodeConfigAdditionAckList->list.count; e2CfgIdx++) 
+                     {
+                        e2NodeAdditionAckItem = (E2nodeComponentConfigAdditionAck_ItemIEs_t*) e2NodeConfigAdditionAckList->list.array[e2CfgIdx];    
+                        handleE2NodeConfigUpdateAckIes((PTR)&e2NodeAdditionAckItem->value.choice.E2nodeComponentConfigAdditionAck_Item,\
+                        ProtocolIE_IDE2_id_E2nodeComponentConfigAdditionAck);
+                     }
+                  }
+                  break;
+               }
+               case ProtocolIE_IDE2_id_E2nodeComponentConfigUpdateAck:
+               {
+                  e2NodeConfigUpdateAckList = &e2NodeConfigUpdateAck->protocolIEs.list.array[arrIdx]->value.choice.E2nodeComponentConfigUpdateAck_List;
+                  if(e2NodeConfigUpdateAckList->list.array)
+                  {
+                     for(e2CfgIdx = 0; e2CfgIdx< e2NodeConfigUpdateAckList->list.count; e2CfgIdx++) 
+                     {
+                        e2NodeUpdateAckItem = (E2nodeComponentConfigUpdateAck_ItemIEs_t*) e2NodeConfigUpdateAckList->list.array[e2CfgIdx];    
+                        handleE2NodeConfigUpdateAckIes((PTR)&e2NodeUpdateAckItem->value.choice.E2nodeComponentConfigUpdateAck_Item,\
+                        ProtocolIE_IDE2_id_E2nodeComponentConfigUpdateAck);
+                     }
+                  }
+                  break;
+               }
+               case ProtocolIE_IDE2_id_E2nodeComponentConfigRemovalAck:
+               {
+                  e2NodeConfigRemovalAckList = &e2NodeConfigUpdateAck->protocolIEs.list.array[arrIdx]->value.choice.E2nodeComponentConfigRemovalAck_List;
+                  if(e2NodeConfigRemovalAckList->list.array)
+                  {
+                     for(e2CfgIdx = 0; e2CfgIdx< e2NodeConfigRemovalAckList->list.count; e2CfgIdx++) 
+                     {
+                        e2NodeRemovalAckItem = (E2nodeComponentConfigRemovalAck_ItemIEs_t*) e2NodeConfigRemovalAckList->list.array[e2CfgIdx];    
+                        handleE2NodeConfigUpdateAckIes((PTR)&e2NodeRemovalAckItem->value.choice.E2nodeComponentConfigRemovalAck_Item,\
+                        ProtocolIE_IDE2_id_E2nodeComponentConfigRemovalAck);
+                     }
+                  }
+                  break;
+               }
+            }
+       }
+   }
+
+   freeAperDecodingOfE2NodeConfigUpdateAck(e2NodeConfigUpdateAck);
+}
+
+/*******************************************************************
+ *
+ * @brief Deallocate the memory allocated for RemovalRequest msg
+ *
+ * @details
+ *
+ *    Function : FreeRemovalRequest
+ *
+ *    Functionality:
+ *       - freeing the memory allocated for RemovalRequest
+ *
+ * @params[in] E2AP_PDU_t *e2apMsg
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+void FreeRemovalRequest(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx =0;
+   E2RemovalRequest_t  *removalReq = NULLP;
+
+   if(e2apMsg != NULLP)
+   {
+      if(e2apMsg->choice.initiatingMessage != NULLP)
+      {
+         removalReq = &e2apMsg->choice.initiatingMessage->value.choice.E2RemovalRequest;
+         if(removalReq->protocolIEs.list.array)
+         {
+            for(ieIdx = 0; ieIdx < removalReq->protocolIEs.list.count; ieIdx++)
+            {
+               DU_FREE(removalReq->protocolIEs.list.array[ieIdx], sizeof(E2RemovalRequestIEs_t));
+            }
+            DU_FREE(removalReq->protocolIEs.list.array, removalReq->protocolIEs.list.size);
+         }
+         DU_FREE(e2apMsg->choice.initiatingMessage, sizeof(InitiatingMessageE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Build and send the removal request msg
+ *
+ * @details
+ *
+ *    Function : BuildAndSendRemovalRequest
+ *
+ *    Functionality:
+ *         - Buld and send the removal request msg to E2 node
+ *
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+
+uint8_t BuildAndSendRemovalRequest()
+{
+   uint8_t ieIdx = 0, elementCnt = 0, transId = 0;
+   uint8_t ret = RFAILED;
+   E2AP_PDU_t        *e2apMsg = NULLP;
+   E2RemovalRequest_t  *removalReq = NULLP;
+   asn_enc_rval_t     encRetVal;       /* Encoder return value */
+
+   DU_LOG("\nINFO   -->  E2AP : Building Removal Request\n");
+
+   do
+   {
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->present = E2AP_PDU_PR_initiatingMessage;
+      DU_ALLOC(e2apMsg->choice.initiatingMessage, sizeof(InitiatingMessageE2_t));
+      if(e2apMsg->choice.initiatingMessage == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->choice.initiatingMessage->procedureCode = ProcedureCodeE2_id_E2removal;
+      e2apMsg->choice.initiatingMessage->criticality = CriticalityE2_reject;
+      e2apMsg->choice.initiatingMessage->value.present = InitiatingMessageE2__value_PR_E2RemovalRequest;
+      removalReq = &e2apMsg->choice.initiatingMessage->value.choice.E2RemovalRequest;
+
+      elementCnt = 1;
+      removalReq->protocolIEs.list.count = elementCnt;
+      removalReq->protocolIEs.list.size = elementCnt * sizeof(E2RemovalRequestIEs_t *);
+
+      DU_ALLOC(removalReq->protocolIEs.list.array, removalReq->protocolIEs.list.size);
+      if(!removalReq->protocolIEs.list.array)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      for(ieIdx = 0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(removalReq->protocolIEs.list.array[ieIdx], sizeof(E2RemovalRequestIEs_t));
+         if(!removalReq->protocolIEs.list.array[ieIdx])
+         {
+            DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+            break;
+         }
+      }
+
+      /* In case of failure */
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      removalReq->protocolIEs.list.array[ieIdx]->id = ProtocolIE_IDE2_id_TransactionID;
+      removalReq->protocolIEs.list.array[ieIdx]->criticality = CriticalityE2_reject;
+      removalReq->protocolIEs.list.array[ieIdx]->value.present = E2RemovalRequestIEs__value_PR_TransactionID;
+      transId = assignTransactionId();
+      removalReq->protocolIEs.list.array[ieIdx]->value.choice.TransactionID = transId;
+
+      /* Prints the Msg formed */
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf,\
+            encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode removal request structure (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG   -->  E2AP : Created APER encoded buffer for removal request\n");
+#ifdef DEBUG_ASN_PRINT
+         for(int i=0; i< encBufSize; i++)
+         {
+            printf("%x",encBuf[i]);
+         }
+#endif
+      }
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Sending removal request failed");
+         break;
+      }
+
+
+      ret = ROK;
+      duCb.e2apDb.e2TransInfo.e2InitTransaction[transId].transactionId = transId;
+      duCb.e2apDb.e2TransInfo.e2InitTransaction[transId].procedureCode = e2apMsg->choice.initiatingMessage->procedureCode;
+      break;
+   }while(true);
+
+   /* Free all memory */
+   FreeRemovalRequest(e2apMsg);
+   
+   return ret;
+}
+
+/******************************************************************
+ *
+ * @brief Deallocation of memory allocated by aper decoder
+ *   for Removal failure
+ *
+ * @details
+ *
+ *    Function : freeAperDecodingOfE2RemovalFailure
+ *
+ *    Functionality: Deallocation of memory allocated by aper decoder
+ * for Removal failure
+ *
+ * @params[in] Pointer to removalFailure
+ * @return void
+ *
+ * ****************************************************************/
+void freeAperDecodingOfE2RemovalFailure(E2RemovalFailure_t *removalFailure)
+{
+   uint8_t arrIdx=0;
+
+   if(removalFailure)
+   {
+      if(removalFailure->protocolIEs.list.array)
+      {
+         for(arrIdx=0; arrIdx<removalFailure->protocolIEs.list.count; arrIdx++)
+         {
+            if(removalFailure->protocolIEs.list.array[arrIdx])
+            {
+               free(removalFailure->protocolIEs.list.array[arrIdx]);
+            }
+         }
+         free(removalFailure->protocolIEs.list.array);
+      }
+   }
+}
+
+/******************************************************************
+ *
+ * @brief Processes the E2 removal failure msg
+ *
+ * @details
+ *
+ *    Function : procE2RemovalFailure
+ *
+ *    Functionality: Processes the E2 removal failure msg
+ *
+ * @params[in] 
+ *       E2AP_PDU_t *e2apMsg
+ *
+ * @return void
+ *
+ * ****************************************************************/
+void ProcE2RemovalFailure(E2AP_PDU_t *e2apMsg) 
+{
+   uint8_t ieIdx = 0, transId=0;
+   CauseE2_t *cause = NULLP;
+   E2RemovalFailure_t *e2RemovalFailure=NULLP;
+
+   e2RemovalFailure = &e2apMsg->choice.unsuccessfulOutcome->value.choice.E2RemovalFailure;
+
+   if(!e2RemovalFailure->protocolIEs.list.array)      
+   {
+      DU_LOG("\nERROR  -->  E2AP : e2RemovalFailure array pointer is null");
+      return;
+   }
+   
+   for(ieIdx=0; ieIdx < e2RemovalFailure->protocolIEs.list.count; ieIdx++)
+   {
+      if(e2RemovalFailure->protocolIEs.list.array[ieIdx])
+      {
+         switch(e2RemovalFailure->protocolIEs.list.array[ieIdx]->id)
+         {
+            case ProtocolIE_IDE2_id_TransactionID:
+               {
+                  transId = e2RemovalFailure->protocolIEs.list.array[ieIdx]->value.choice.TransactionID;
+                  if((duCb.e2apDb.e2TransInfo.e2InitTransaction[transId].transactionId == transId) &&\
+                        (duCb.e2apDb.e2TransInfo.e2InitTransaction[transId].procedureCode == e2apMsg->choice.unsuccessfulOutcome->procedureCode))
+                  {
+                     memset(&duCb.e2apDb.e2TransInfo.e2InitTransaction[transId], 0, sizeof(E2TransInfo));
+                  }
+                  else
+                  {
+                     DU_LOG("\nERROR  -->  E2AP : Invalid transaction id [%d]", transId);
+                  }
+                  break;
+               }
+            case ProtocolIE_IDE2_id_CauseE2:
+               {
+                   cause = &e2RemovalFailure->protocolIEs.list.array[ieIdx]->value.choice.CauseE2;
+                   printE2ErrorCause(cause);
+                   break; 
+               }
+            default:
+               {
+                  DU_LOG("\nERROR  -->  E2AP : Received Invalid Ie [%ld]", e2RemovalFailure->protocolIEs.list.array[ieIdx]->id);
+                  break;
+               }
+         }
+      }
+   }
+   freeAperDecodingOfE2RemovalFailure(e2RemovalFailure);
+}
+
+ /******************************************************************
+  *
+  * @brief Deallocation of memory allocated by aper decoder
+  *   for Removal failure
+  *
+  * @details
+  *
+  *    Function : freeAperDecodingOfE2RemovalResponse
+  *
+  *    Functionality: Deallocation of memory allocated by aper decoder
+  * for Removal failure
+  *
+  * @params[in] Pointer to removalResponse
+  * @return void
+  *
+  * ****************************************************************/
+ void freeAperDecodingOfE2RemovalResponse(E2RemovalResponse_t *removalResponse)
+ {
+    uint8_t arrIdx=0;
+
+    if(removalResponse)
+    {
+       if(removalResponse->protocolIEs.list.array)
+       {
+          for(arrIdx=0; arrIdx<removalResponse->protocolIEs.list.count; arrIdx++)
+          {
+             if(removalResponse->protocolIEs.list.array[arrIdx])
+             {
+                free(removalResponse->protocolIEs.list.array[arrIdx]);
+             }
+          }
+          free(removalResponse->protocolIEs.list.array);
+       }
+    }
+ }
+
+/*******************************************************************
+ *
+ * @brief process the E2 Removal Response
+ *
+ * @details
+ *
+ *    Function : ProcE2RemovalResponse 
+ *
+ * Functionality: Process E2 Removal Response 
+ *
+ * @params[in] 
+ *      E2AP_PDU_t *e2apMsg
+ * @return void
+ *
+ ******************************************************************/
+
+void ProcE2RemovalResponse(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx = 0, transId=0;
+   E2RemovalResponse_t *removalRsp = NULLP;
+   
+   removalRsp = &e2apMsg->choice.successfulOutcome->value.choice.E2RemovalResponse;
+
+   if(!removalRsp->protocolIEs.list.array)      
+   {
+      DU_LOG("\nERROR  -->  E2AP : removalRsp array pointer is null");
+      return;
+   }
+
+   for(ieIdx=0; ieIdx < removalRsp->protocolIEs.list.count; ieIdx++)
+   {
+      if(removalRsp->protocolIEs.list.array[ieIdx])
+      {
+         switch(removalRsp->protocolIEs.list.array[ieIdx]->id)
+         {
+            case ProtocolIE_IDE2_id_TransactionID:
+               {
+                  transId = removalRsp->protocolIEs.list.array[ieIdx]->value.choice.TransactionID;
+                  if((duCb.e2apDb.e2TransInfo.e2InitTransaction[transId].transactionId == transId) &&\
+                        (duCb.e2apDb.e2TransInfo.e2InitTransaction[transId].procedureCode == e2apMsg->choice.unsuccessfulOutcome->procedureCode))
+                  {
+                     DU_LOG("\nINFO  -->  E2AP : Sending request to close the sctp connection");
+                     cmInetClose(&ricParams.sockFd);
+                     memset(&duCb.e2apDb.e2TransInfo.e2InitTransaction[transId], 0, sizeof(E2TransInfo));
+                     removeE2NodeInformation();
+                  }
+                  else
+                  {
+                     DU_LOG("\nERROR  -->  E2AP : Invalid transaction id [%d]", transId);
+                  }
+                  break;
+               }
+            default:
+               {
+                  DU_LOG("\nERROR  -->  E2AP : Received Invalid Ie [%ld]", removalRsp->protocolIEs.list.array[ieIdx]->id);
+                  break;
+               }
+         }
+      }
+   }
+   
+   freeAperDecodingOfE2RemovalResponse(removalRsp);
+}
+
+/*******************************************************************
+ *
+ * @brief Deallocate the memory allocated for E2 Connection Update Failure
+ *
+ * @details
+ *
+ *    Function : FreeE2ConnectionUpdateFailure
+ *
+ *    Functionality:
+ *       - freeing the memory allocated for E2ConnectionUpdateFailure
+ *
+ * @params[in] E2AP_PDU_t *e2apMsg
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+void FreeE2ConnectionUpdateFailure(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx =0;
+   E2connectionUpdateFailure_t *e2ConnectionUpdateFailure=NULLP;
+
+   if(e2apMsg != NULLP)
+   {
+      if(e2apMsg->choice.unsuccessfulOutcome != NULLP)
+      {
+         e2ConnectionUpdateFailure = &e2apMsg->choice.unsuccessfulOutcome->value.choice.E2connectionUpdateFailure;
+         if(e2ConnectionUpdateFailure->protocolIEs.list.array)
+         {
+            for(ieIdx=0; ieIdx < e2ConnectionUpdateFailure->protocolIEs.list.count; ieIdx++)
+            {
+               DU_FREE(e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx], sizeof(E2connectionUpdateFailure_IEs_t));
+            }
+            DU_FREE(e2ConnectionUpdateFailure->protocolIEs.list.array, e2ConnectionUpdateFailure->protocolIEs.list.size);
+         }
+         DU_FREE(e2apMsg->choice.unsuccessfulOutcome, sizeof(UnsuccessfulOutcomeE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Buld and send the E2 Connection Update Failure msg
+ *
+ * @details
+ *
+ *    Function : BuildAndSendE2ConnectionUpdateFailure
+ *
+ *    Functionality:
+ *         - Buld and send the E2 Connection Update Failure Message
+ * @params[in] 
+ *    Trans Id 
+ *    Failure Cause
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+
+uint8_t BuildAndSendE2ConnectionUpdateFailure(uint16_t transId, E2FailureCause failureCause)
+{
+   uint8_t           ieIdx = 0, elementCnt = 0;
+   uint8_t           ret = RFAILED;
+   E2AP_PDU_t        *e2apMsg = NULLP;
+   E2connectionUpdateFailure_t *e2ConnectionUpdateFailure=NULLP;
+   asn_enc_rval_t    encRetVal;       /* Encoder return value */
+
+   DU_LOG("\nINFO   -->  E2AP : Building E2 Connection Update Failure Message\n");
+   do
+   {
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+      e2apMsg->present = E2AP_PDU_PR_unsuccessfulOutcome;
+
+      DU_ALLOC(e2apMsg->choice.unsuccessfulOutcome, sizeof(UnsuccessfulOutcomeE2_t));
+      if(e2apMsg->choice.unsuccessfulOutcome == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->choice.unsuccessfulOutcome->procedureCode = ProcedureCodeE2_id_E2connectionUpdate;
+      e2apMsg->choice.unsuccessfulOutcome->criticality = CriticalityE2_reject;
+      e2apMsg->choice.unsuccessfulOutcome->value.present = UnsuccessfulOutcomeE2__value_PR_E2connectionUpdateFailure;
+      e2ConnectionUpdateFailure = &e2apMsg->choice.unsuccessfulOutcome->value.choice.E2connectionUpdateFailure;
+
+      elementCnt = 2;
+      e2ConnectionUpdateFailure->protocolIEs.list.count = elementCnt;
+      e2ConnectionUpdateFailure->protocolIEs.list.size = elementCnt * sizeof(E2connectionUpdateFailure_IEs_t *);
+      DU_ALLOC(e2ConnectionUpdateFailure->protocolIEs.list.array, e2ConnectionUpdateFailure->protocolIEs.list.size);
+      if(!e2ConnectionUpdateFailure->protocolIEs.list.array)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      for(ieIdx=0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx], sizeof(E2connectionUpdateFailure_IEs_t));
+         if(!e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx])
+         {
+            DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+            break;
+         }
+      }
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx]->id =  ProtocolIE_IDE2_id_TransactionID;
+      e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx]->criticality = CriticalityE2_reject;
+      e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx]->value.present = E2connectionUpdateFailure_IEs__value_PR_TransactionID;
+      e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx]->value.choice.TransactionID = transId;
+
+      /* Cause */
+      ieIdx++;
+      e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx]->id = ProtocolIE_IDE2_id_CauseE2;
+      e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx]->criticality = CriticalityE2_ignore;
+      e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx]->value.present = E2connectionUpdateFailure_IEs__value_PR_CauseE2;
+      fillE2Cause(&e2ConnectionUpdateFailure->protocolIEs.list.array[ieIdx]->value.choice.CauseE2, failureCause);
+      
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf, encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode E2 connection update failure structure (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : Created APER encoded buffer for E2 Connection Update Failure \n");
+         for(int i=0; i< encBufSize; i++)
+         {
+            DU_LOG("%x",encBuf[i]);
+         }
+      }
+
+      /* Sending msg */
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Failed to send E2 Connection Update Failure");
+         break;
+      }
+
+      ret = ROK;
+      break;
+   }while(true);
+
+   FreeE2ConnectionUpdateFailure(e2apMsg);
+   return ret;
+}
+
+/*******************************************************************
+ *
+ * @brief fill E2 connection update item
+ *
+ * @details
+ *
+ *    Function : fillE2connectionUpdateItem
+ *
+ *    Functionality: fill E2 connection update item
+ *
+ * @params[in]
+ *    E2connectionUpdate Item to be filled
+ *    Protocol Id
+ *    IP Address
+ *    Usage
+ * @return ROK - success
+ *         RFAILED - failure
+ * ****************************************************************/
+
+uint8_t fillE2connectionUpdateItem(PTR connectionInfo, uint8_t protocolId, uint32_t ipAddress, AssocUsage usage)
+{
+   CauseE2_t *cause=NULLP;
+   TNLusage_t  *tnlUsage=NULLP;
+   E2FailureCause failureCause;
+   TNLinformation_t *tnlInformation = NULLP;
+   E2connectionUpdate_Item_t *connectionModifyItem=NULLP;
+   E2connectionSetupFailed_Item_t *connectionRemoveITem=NULLP;
+
+   switch(protocolId)
+   {
+      case ProtocolIE_IDE2_id_E2connectionUpdate_Item:
+      {
+         connectionModifyItem = (E2connectionUpdate_Item_t*)connectionInfo;
+         tnlInformation = &connectionModifyItem->tnlInformation;
+         tnlUsage = &connectionModifyItem->tnlUsage;
+         break;
+      }
+
+      case ProtocolIE_IDE2_id_E2connectionSetupFailed_Item:
+      {
+         connectionRemoveITem = (E2connectionSetupFailed_Item_t*)connectionInfo;
+         tnlInformation= &connectionRemoveITem->tnlInformation;
+         cause = &connectionRemoveITem->cause;
+         break;
+      }
+      default:
+         return RFAILED;
+   }
+
+   tnlInformation->tnlAddress.size =  4*sizeof(uint8_t);
+   DU_ALLOC(tnlInformation->tnlAddress.buf, tnlInformation->tnlAddress.size);
+   if(!tnlInformation->tnlAddress.buf)
+   {
+      DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+      return RFAILED;
+   }
+
+   tnlInformation->tnlAddress.buf[3] =  ipAddress & 0xFF;
+   tnlInformation->tnlAddress.buf[2] = (ipAddress>> 8) & 0xFF;
+   tnlInformation->tnlAddress.buf[1] = (ipAddress>> 16) & 0xFF;
+   tnlInformation->tnlAddress.buf[0] = (ipAddress>> 24) & 0xFF;
+   tnlInformation->tnlAddress.bits_unused = 0;
+
+   switch(protocolId)
+   {
+      case ProtocolIE_IDE2_id_E2connectionUpdate_Item:
+         {
+            *tnlUsage = usage;
+            break;
+         }
+      case ProtocolIE_IDE2_id_E2connectionSetupFailed_Item:
+         {
+            failureCause.causeType = E2_TRANSPORT;
+            failureCause.cause = E2_TRANSPORT_CAUSE_UNSPECIFIED;
+            fillE2Cause(cause, failureCause);
+            break;
+         }
+      default:
+         return RFAILED;
+   }
+   return ROK;
+}
+
+
+/*******************************************************************
+ *
+ * @brief Build E2 connection modification list
+ *
+ * @details
+ *
+ *    Function :BuildE2ConnectionUpdateList 
+ *
+ *    Functionality: Build E2 connection modification list
+ *
+ * @params[in]
+ *    E2 connection update list to be filled
+ *    Count of E2 connection to be added in the list    
+ *    Received list of E2 connection
+ *
+ * @return ROK - success
+ *         RFAILED - failure
+ * ****************************************************************/
+
+uint8_t BuildE2ConnectionUpdateList(E2connectionUpdate_List_t *connectionSetupList, uint8_t count, E2ConnectionItem *tmpConnectionList)
+{
+   uint8_t arrIdx = 0;
+   E2connectionUpdate_ItemIEs_t *connectionSetupItem=NULLP;
+
+   connectionSetupList->list.count = count;
+
+   connectionSetupList->list.size = connectionSetupList->list.count*sizeof(E2connectionUpdate_ItemIEs_t*);
+   DU_ALLOC(connectionSetupList->list.array, connectionSetupList->list.size);
+   if(connectionSetupList->list.array)
+   {
+      for(arrIdx = 0; arrIdx< connectionSetupList->list.count; arrIdx++)
+      {
+         DU_ALLOC(connectionSetupList->list.array[arrIdx], sizeof(E2connectionUpdate_ItemIEs_t));
+         if(connectionSetupList->list.array[arrIdx] == NULLP)
+         {
+            DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+            return RFAILED;
+         }
+         connectionSetupItem = (E2connectionUpdate_ItemIEs_t*)connectionSetupList->list.array[arrIdx];
+         connectionSetupItem->id = ProtocolIE_IDE2_id_E2connectionUpdate_Item;
+         connectionSetupItem->criticality= CriticalityE2_ignore;
+         connectionSetupItem->value.present = E2connectionUpdate_ItemIEs__value_PR_E2connectionUpdate_Item;
+         if(fillE2connectionUpdateItem((PTR)&connectionSetupItem->value.choice.E2connectionUpdate_Item, ProtocolIE_IDE2_id_E2connectionUpdate_Item,\
+          tmpConnectionList[arrIdx].ipV4Addr, tmpConnectionList[arrIdx].usage) != ROK)
+         {
+            DU_LOG("\nERROR  -->  E2AP : Failed to fill E2 connection update item");
+            return RFAILED;
+         }
+
+      }
+   }
+   else
+   {
+      DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+      return RFAILED;
+   }
+   return ROK;
+}
+
+/*******************************************************************
+ *
+ * @brief Build E2 connection setup failed list
+ *
+ * @details
+ *
+ *    Function : BuildE2ConnectionSetupFailedList
+ *
+ *    Functionality: Build E2 connection setup failed list
+ *
+ * @params[in]
+ *    E2 connection setup failed list to be filled
+ *    Count of E2 connection to be added in the list    
+ *    Received list of E2 connection
+ *
+ * @return ROK - success
+ *         RFAILED - failure
+ * ****************************************************************/
+
+uint8_t BuildE2ConnectionSetupFailedList(E2connectionSetupFailed_List_t *setupFailedList, uint8_t count, E2ConnectionItem *tmpConnectionList)
+{
+   uint8_t arrIdx = 0;
+   E2connectionSetupFailed_ItemIEs_t *setupFailedItem=NULLP;
+
+   setupFailedList->list.count = 1;
+
+   setupFailedList->list.size = setupFailedList->list.count*sizeof(E2connectionSetupFailed_ItemIEs_t *);
+   DU_ALLOC(setupFailedList->list.array, setupFailedList->list.size);
+   if(setupFailedList->list.array)
+   {
+      for(arrIdx = 0; arrIdx< setupFailedList->list.count; arrIdx++)
+      {
+         DU_ALLOC(setupFailedList->list.array[arrIdx], sizeof(E2connectionSetupFailed_ItemIEs_t));
+         if(setupFailedList->list.array[arrIdx] == NULLP)
+         {
+            DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+            return RFAILED;
+         }
+         setupFailedItem = (E2connectionSetupFailed_ItemIEs_t*)setupFailedList->list.array[arrIdx];
+         setupFailedItem->id = ProtocolIE_IDE2_id_E2connectionSetupFailed_Item;
+         setupFailedItem->criticality= CriticalityE2_ignore;
+         setupFailedItem->value.present = E2connectionSetupFailed_ItemIEs__value_PR_E2connectionSetupFailed_Item;
+         if(fillE2connectionUpdateItem((PTR)&setupFailedItem->value.choice.E2connectionSetupFailed_Item, ProtocolIE_IDE2_id_E2connectionSetupFailed_Item,\
+          tmpConnectionList[arrIdx].ipV4Addr, tmpConnectionList[arrIdx].usage) != ROK)
+         {
+            DU_LOG("\nERROR  -->  E2AP : Failed to fill E2 connection failed to update item");
+            return RFAILED;
+         }
+
+      }
+   }
+   else
+   {
+      DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+      return RFAILED;
+   }
+   return ROK;
+}
+
+/*******************************************************************
+ *
+ * @brief Deallocate the memory allocated for E2 Connection
+ * Update ack msg 
+ *
+ * @details
+ *
+ *    Function :FreeE2ConnectionUpdateAcknowledge 
+ *
+ *    Functionality:
+ *       - freeing the memory allocated for E2 Connection
+ * Update ack msg
+ *
+ * @params[in] E2AP_PDU_t *e2apMsg
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+
+void FreeE2ConnectionUpdateAcknowledge(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx =0, arrIdx=0;
+   E2connectionUpdateAcknowledge_t *connectionUpdate = NULLP;
+   E2connectionUpdate_List_t *connectionSetupList = NULLP;
+   E2connectionSetupFailed_List_t *setupFailedList = NULLP;
+
+   if(e2apMsg != NULLP)
+   {
+      if(e2apMsg->choice.successfulOutcome != NULLP)
+      {
+         connectionUpdate = &e2apMsg->choice.successfulOutcome->value.choice.E2connectionUpdateAcknowledge;
+         if(connectionUpdate->protocolIEs.list.array)
+         {
+            for(ieIdx = 0; ieIdx < connectionUpdate->protocolIEs.list.count; ieIdx++)
+            {
+               if(connectionUpdate->protocolIEs.list.array[ieIdx])
+               {
+                  switch(connectionUpdate->protocolIEs.list.array[ieIdx]->id)
+                  {
+                     case ProtocolIE_IDE2_id_TransactionID:
+                        break;
+
+                     case ProtocolIE_IDE2_id_E2connectionSetup:
+                        {
+                           connectionSetupList = &connectionUpdate->protocolIEs.list.array[ieIdx]->value.choice.E2connectionUpdate_List;
+                           if(connectionSetupList->list.array)
+                           {
+                              for(arrIdx = 0; arrIdx < connectionSetupList->list.count; arrIdx++)
+                              {
+                                 DU_FREE(connectionSetupList->list.array[arrIdx], sizeof(E2connectionUpdate_ItemIEs_t));
+                              }
+                              DU_FREE(connectionSetupList->list.array, connectionSetupList->list.size);
+                           }
+                           break;
+                        }
+
+                     case ProtocolIE_IDE2_id_E2connectionSetupFailed:
+                        {
+                           setupFailedList = &connectionUpdate->protocolIEs.list.array[ieIdx]->value.choice.E2connectionSetupFailed_List;
+                           if(setupFailedList->list.array)
+                           {
+                              for(arrIdx = 0; arrIdx < setupFailedList->list.count; arrIdx++)
+                              {
+                                 DU_FREE(setupFailedList->list.array[arrIdx], sizeof(E2connectionSetupFailed_ItemIEs_t));
+                              }
+                              DU_FREE(setupFailedList->list.array, setupFailedList->list.size);
+                           }
+                           break;
+                        }
+                  }
+                  DU_FREE(connectionUpdate->protocolIEs.list.array[ieIdx], sizeof(E2connectionUpdateAck_IEs_t));
+               }
+            }
+            DU_FREE(connectionUpdate->protocolIEs.list.array, connectionUpdate->protocolIEs.list.size);
+         }
+         DU_FREE(e2apMsg->choice.successfulOutcome, sizeof(SuccessfulOutcomeE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Buld and send the E2 Connection Update Acknowledge msg
+ *
+ * @details
+ *
+ *    Function : BuildAndSendE2ConnectionUpdateAcknowledge
+ *
+ *    Functionality:
+ *         - Buld and send the E2 Connection Update Acknowledge Message
+ * @params[in] 
+ *    Trans Id 
+ *    List of E2 connection needs to fill in IE 
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ * ****************************************************************/
+
+uint8_t BuildAndSendE2ConnectionUpdateAcknowledge(uint16_t transId,  E2ConnectionList connectionInfoList)
+{
+   uint8_t           ieIdx = 0, elementCnt = 0;
+   uint8_t           ret = RFAILED;
+   E2AP_PDU_t        *e2apMsg = NULLP;
+   asn_enc_rval_t    encRetVal;       
+   E2connectionUpdateAcknowledge_t *e2ConnectionUpdateAcknowledge=NULLP;
+
+   DU_LOG("\nINFO   -->  E2AP : Building E2 Connection Update Acknowledge Message\n");
+   do
+   {
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+      e2apMsg->present = E2AP_PDU_PR_successfulOutcome;
+
+      DU_ALLOC(e2apMsg->choice.successfulOutcome, sizeof(SuccessfulOutcomeE2_t));
+      if(e2apMsg->choice.successfulOutcome == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->choice.successfulOutcome->procedureCode = ProcedureCodeE2_id_E2connectionUpdate;
+      e2apMsg->choice.successfulOutcome->criticality = CriticalityE2_reject;
+      e2apMsg->choice.successfulOutcome->value.present = SuccessfulOutcomeE2__value_PR_E2connectionUpdateAcknowledge;
+      e2ConnectionUpdateAcknowledge = &e2apMsg->choice.successfulOutcome->value.choice.E2connectionUpdateAcknowledge;
+
+      elementCnt = 1;
+      if(connectionInfoList.numOfE2ConnectionSetup)
+         elementCnt++;
+      if(connectionInfoList.numOfE2ConnectionFailedToSetup)
+         elementCnt++;
+
+      e2ConnectionUpdateAcknowledge->protocolIEs.list.count = elementCnt;
+      e2ConnectionUpdateAcknowledge->protocolIEs.list.size = elementCnt * sizeof(E2connectionUpdateAck_IEs_t*);
+      DU_ALLOC(e2ConnectionUpdateAcknowledge->protocolIEs.list.array, e2ConnectionUpdateAcknowledge->protocolIEs.list.size);
+      if(!e2ConnectionUpdateAcknowledge->protocolIEs.list.array)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+         break;
+      }
+
+      for(ieIdx=0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx], sizeof(E2connectionUpdateAck_IEs_t));
+         if(!e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx])
+         {
+            DU_LOG("\nERROR  -->  E2AP : Memory allocation failed in %s at line %d", __func__, __LINE__);
+            break;
+         }
+      }
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->id =  ProtocolIE_IDE2_id_TransactionID;
+      e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->criticality = CriticalityE2_reject;
+      e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->value.present = E2connectionUpdateAck_IEs__value_PR_TransactionID;
+      e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->value.choice.TransactionID = transId;
+
+      if(connectionInfoList.numOfE2ConnectionSetup)
+      {
+         ieIdx++;
+         e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->id =  ProtocolIE_IDE2_id_E2connectionSetup;
+         e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->criticality = CriticalityE2_reject;
+         e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->value.present = E2connectionUpdateAck_IEs__value_PR_E2connectionUpdate_List;
+         if(BuildE2ConnectionUpdateList(&e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->value.choice.E2connectionUpdate_List, \
+                  connectionInfoList.numOfE2ConnectionSetup, connectionInfoList.setupE2Connection) != ROK)
+         {
+            DU_LOG("\nERROR  -->  E2AP : Failed to send E2 Connection setup list");
+            break;
+         }
+      }
+      
+      if(connectionInfoList.numOfE2ConnectionFailedToSetup)
+      {
+         ieIdx++;
+         e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->id =  ProtocolIE_IDE2_id_E2connectionSetupFailed;
+         e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->criticality = CriticalityE2_reject;
+         e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->value.present = E2connectionUpdateAck_IEs__value_PR_E2connectionSetupFailed_List;
+         if(BuildE2ConnectionSetupFailedList(&e2ConnectionUpdateAcknowledge->protocolIEs.list.array[ieIdx]->value.choice.E2connectionSetupFailed_List, \
+               connectionInfoList.numOfE2ConnectionFailedToSetup, connectionInfoList.failedToSetupE2Connection) != ROK) 
+         {
+            DU_LOG("\nERROR  -->  E2AP : Failed to send E2 Connection failed to setup list");
+            break;
+         }
+      }
+
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf, encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode E2 connection update acknowledge failure structure (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : Created APER encoded buffer for E2 Connection Update Acknowledge \n");
+         for(int i=0; i< encBufSize; i++)
+         {
+            DU_LOG("%x",encBuf[i]);
+         }
+      }
+
+      /* Sending msg */
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Failed to send E2 Connection Update Acknowledge");
+         break;
+      }
+
+      ret = ROK;
+      break;
+   }while(true);
+
+   FreeE2ConnectionUpdateAcknowledge(e2apMsg);
+   return ret;
+}
+
+/******************************************************************
+ *
+ * @brief Deallocation of memory allocated by aper decoder for 
+ * E2 Connection Update
+ *
+ * @details
+ *
+ *    Function :freeAperDecodingOfE2ConnectionUpdate 
+ *
+ *    Functionality: Deallocation of memory allocated by aper decoder for
+ *    E2 Connection Update
+ *
+ * @params[in] Pointer to connectionUpdate 
+ * @return void
+ *
+ * ****************************************************************/
+
+void freeAperDecodingOfE2ConnectionUpdate(E2connectionUpdate_t *connectionUpdate)
+{
+   uint8_t ieIdx =0, arrIdx=0;
+   E2connectionUpdate_List_t *connectionToBeModifyList = NULLP;
+   E2connectionUpdateRemove_List_t *connectionToBeRemoveList = NULLP;
+
+   if(connectionUpdate->protocolIEs.list.array)
+   {
+      for(ieIdx = 0; ieIdx < connectionUpdate->protocolIEs.list.count; ieIdx++)
+      {
+         if(connectionUpdate->protocolIEs.list.array[ieIdx])
+         {
+            switch(connectionUpdate->protocolIEs.list.array[ieIdx]->id)
+            {
+               case ProtocolIE_IDE2_id_TransactionID:
+                  break;
+
+               case ProtocolIE_IDE2_id_E2connectionUpdateModify:
+                  {
+                     connectionToBeModifyList = &connectionUpdate->protocolIEs.list.array[ieIdx]->value.choice.E2connectionUpdate_List;
+                     if(connectionToBeModifyList->list.array)
+                     {
+                        for(arrIdx= 0; arrIdx< connectionToBeModifyList->list.count; arrIdx++)
+                        {
+                           free(connectionToBeModifyList->list.array[arrIdx]);
+                        }
+                        free(connectionToBeModifyList->list.array);
+                     }
+                     break;
+                  }
+               case ProtocolIE_IDE2_id_E2connectionUpdateRemove:
+                  {
+                     connectionToBeRemoveList = &connectionUpdate->protocolIEs.list.array[ieIdx]->value.choice.E2connectionUpdateRemove_List;
+                     if(connectionToBeRemoveList->list.array)
+                     {
+                        for(arrIdx= 0; arrIdx< connectionToBeRemoveList->list.count; arrIdx++)
+                        {
+                           free(connectionToBeRemoveList->list.array[arrIdx]);
+                        }
+                        free(connectionToBeRemoveList->list.array);
+                     }
+                     break;
+                  }
+            }
+            free(connectionUpdate->protocolIEs.list.array[ieIdx]);
+         }
+      }
+      free(connectionUpdate->protocolIEs.list.array);
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Handling of E2 connection modification Ie
+ *
+ * @details
+ *
+ *    Function : handleE2ConnectionModification 
+ *
+ * Functionality: Handling of E2 connection modification Ie
+ *
+ * @param 
+ *        E2 Connection update list
+ *        E2 connection list which needs to be filled
+ * @return void
+ *
+ ******************************************************************/
+
+void handleE2ConnectionModification(E2connectionUpdate_List_t *connectionUpdateList, E2ConnectionList *connectionInfoList)
+{
+   uint32_t ipAddress=0;
+   bool infoFound = false;
+   uint8_t arrIdx=0,idx=0, count =0;
+   E2connectionUpdate_ItemIEs_t *connectionModifyItem=NULLP;
+
+   if(connectionUpdateList->list.array)
+   {
+      for(arrIdx = 0; arrIdx < connectionUpdateList->list.count; arrIdx++)
+      {
+         connectionModifyItem= (E2connectionUpdate_ItemIEs_t*)connectionUpdateList->list.array[arrIdx];
+         bitStringToInt(&connectionModifyItem->value.choice.E2connectionUpdate_Item.tnlInformation.tnlAddress, &ipAddress);
+         for(idx=0; idx<duCb.e2apDb.numOfTNLAssoc; idx++)
+         {
+            /* If the TNL information is found in the data base, update the
+             * information in the database */
+            if(duCb.e2apDb.tnlAssoc[idx].destIpAddress.ipV4Addr == ipAddress)
+            {
+               duCb.e2apDb.tnlAssoc[idx].usage = connectionModifyItem->value.choice.E2connectionUpdate_Item.tnlUsage;
+               infoFound = true;
+               break;
+            }
+         }
+         
+         /* If the TNL information is found in the data base, then add the
+          * information in setupE2Connection array else add in failedToSetupE2Connection array */
+         if(infoFound == true)
+         {
+            count =connectionInfoList->numOfE2ConnectionSetup;
+            connectionInfoList->setupE2Connection[count].ipV4Addr =  duCb.e2apDb.tnlAssoc[idx].destIpAddress.ipV4Addr;
+            connectionInfoList->setupE2Connection[count].usage = duCb.e2apDb.tnlAssoc[idx].usage;
+            connectionInfoList->numOfE2ConnectionSetup++;
+         }
+         else
+         {
+            count = connectionInfoList->numOfE2ConnectionFailedToSetup;
+            connectionInfoList->failedToSetupE2Connection[count].ipV4Addr =  ipAddress;
+            connectionInfoList->failedToSetupE2Connection[count].usage = connectionModifyItem->value.choice.E2connectionUpdate_Item.tnlUsage;
+            connectionInfoList->numOfE2ConnectionFailedToSetup++;
+         }
+      }
+
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Handling of E2 connection removal Ie
+ *
+ * @details
+ *
+ *    Function : handleE2ConnectionRemoval 
+ *
+ * Functionality: Handling of E2 connection removal Ie
+ *
+ * @param  
+ *    E2 Connection removal List 
+ * @return void
+ *
+ ******************************************************************/
+
+void handleE2ConnectionRemoval(E2connectionUpdateRemove_List_t *connectionRemovalList)
+{
+   uint32_t ipAddress=0;
+   uint8_t arrIdx=0,idx=0;
+   E2connectionUpdateRemove_ItemIEs_t *connectionRemovalItem=NULLP;
+
+   if(connectionRemovalList->list.array)
+   {
+      for(arrIdx = 0; arrIdx < connectionRemovalList->list.count; arrIdx++)
+      {
+         connectionRemovalItem= (E2connectionUpdateRemove_ItemIEs_t*)connectionRemovalList->list.array[arrIdx];
+         bitStringToInt(&connectionRemovalItem->value.choice.E2connectionUpdateRemove_Item.tnlInformation.tnlAddress, &ipAddress);
+         for(idx=0; idx<duCb.e2apDb.numOfTNLAssoc; idx++)
+         {
+            if(duCb.e2apDb.tnlAssoc[idx].destIpAddress.ipV4Addr == ipAddress)
+            {
+               cmInetClose(&ricParams.sockFd);
+               removeE2NodeInformation();
+               break;
+            }
+         }
+         
+      }
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Process e2 connection update received from RIC
+ *
+ * @details
+ *
+ *    Function : procE2ConnectionUpdate
+ *
+ * Functionality: Process e2 connection update received from RIC
+ *
+ * @param  E2AP_PDU_t  *e2apMsg
+ * @return void
+ *
+ ******************************************************************/
+
+void procE2ConnectionUpdate(E2AP_PDU_t  *e2apMsg)
+{
+   uint8_t arrIdx =0, transId =0;
+   bool invalidTransId = false, connectionFailedToUpdate=false;
+   E2FailureCause failureCause;
+   E2ConnectionList connectionInfoList;
+   E2connectionUpdate_t *connectionUpdate=NULLP;
+
+   DU_LOG("\nINFO   -->  E2AP : E2 connection update received");
+   connectionUpdate = &e2apMsg->choice.initiatingMessage->value.choice.E2connectionUpdate;
+   
+   memset(&connectionInfoList, 0, sizeof(E2ConnectionList));
+   for(arrIdx=0; arrIdx<connectionUpdate->protocolIEs.list.count; arrIdx++)
+   {
+      switch(connectionUpdate->protocolIEs.list.array[arrIdx]->id)
+      {
+         case ProtocolIE_IDE2_id_TransactionID:
+            {
+               transId = connectionUpdate->protocolIEs.list.array[arrIdx]->value.choice.TransactionID;
+               if(transId>255)
+               {
+                  failureCause.causeType = E2_PROTOCOL;
+                  failureCause.cause = E2_ABSTRACT_SYNTAX_ERROR_FALSELY_CONSTRUCTED_MESSAGE;
+                  invalidTransId = true;
+               }
+               break;
+            }
+
+         case ProtocolIE_IDE2_id_E2connectionUpdateModify:
+            {
+               handleE2ConnectionModification(&connectionUpdate->protocolIEs.list.array[arrIdx]->value.choice.E2connectionUpdate_List,\
+                     &connectionInfoList);
+               if((connectionInfoList.numOfE2ConnectionSetup == 0) && (connectionInfoList.numOfE2ConnectionFailedToSetup > 0))
+               {
+                  failureCause.causeType = E2_TRANSPORT;
+                  failureCause.cause = E2_TRANSPORT_CAUSE_UNSPECIFIED;
+                  connectionFailedToUpdate =true;
+               }
+
+               break;
+            }
+
+         case ProtocolIE_IDE2_id_E2connectionUpdateRemove:
+            {
+               handleE2ConnectionRemoval(&connectionUpdate->protocolIEs.list.array[arrIdx]->value.choice.E2connectionUpdateRemove_List);
+               break;
+            }
+
+         default:
+            {
+               DU_LOG("\nERROR  -->  E2AP : Invalid IE received[%ld]",connectionUpdate->protocolIEs.list.array[arrIdx]->id);
+               break;
+            }
+      }
+
+      if(invalidTransId == true || connectionFailedToUpdate ==true)
+         break;
+   }
+   
+   if(invalidTransId == true || connectionFailedToUpdate == true)
+   {
+      if(BuildAndSendE2ConnectionUpdateFailure(transId, failureCause) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Failed to build and send E2 connection update failure");
+      }
+   }
+   else
+   {
+      if(BuildAndSendE2ConnectionUpdateAcknowledge(transId, connectionInfoList) != ROK)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Failed to build and send E2 connection update ack");
+      }
+   }
+
+   freeAperDecodingOfE2ConnectionUpdate(connectionUpdate);
+}
+
+/*******************************************************************
+ *
+ * @brief Free RIC Subscription  action to be added list
+ *
+ * @details
+ *
+ *    Function : freeAperDecodingOfRicSubsActionToBeAdded
+ *
+ *    Functionality: Free the RIC Subscription action to be added list
+ *
+ * @params[in] RICactions_ToBeAddedForModification_List_t *subsDetails
+ * @return void
+ *
+ * ****************************************************************/
+void freeAperDecodingOfRicSubsActionToBeAdded(RICactions_ToBeAddedForModification_List_t *subsDetails)
+{
+   uint8_t elementIdx = 0;
+   RICaction_ToBeAddedForModification_ItemIEs_t *addedActionItemIe=NULLP;
+
+   if(subsDetails->list.array)
+   {
+      for(elementIdx = 0; elementIdx < subsDetails->list.count; elementIdx++)
+      {
+         if(subsDetails->list.array[elementIdx])
+         {
+            addedActionItemIe = (RICaction_ToBeAddedForModification_ItemIEs_t*)subsDetails->list.array[elementIdx];
+            free(addedActionItemIe->value.choice.RICaction_ToBeAddedForModification_Item.ricActionDefinition.buf);
+            free(subsDetails->list.array[elementIdx]);
+         }
+      }
+      free(subsDetails->list.array);
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Deallocation of memory allocated by aper decoder for
+ * RIC Subscription  action to be removed list
+ *
+ * @details
+ *
+ *    Function : freeAperDecodingOfRicSubsActionToBeRemoved
+ *
+ *    Functionality: Free the RIC Subscription action to be removed list
+ *
+ * @params[in] RICactions_ToBeRemovedForModification_List_t *subsDetails
+ * @return void
+ *
+ * ****************************************************************/
+void freeAperDecodingOfRicSubsActionToBeRemoved(RICactions_ToBeRemovedForModification_List_t *subsDetails)
+{
+   uint8_t elementIdx = 0;
+
+   if(subsDetails->list.array)
+   {
+      for(elementIdx = 0; elementIdx < subsDetails->list.count; elementIdx++)
+      {
+         if(subsDetails->list.array[elementIdx])
+         {
+            free(subsDetails->list.array[elementIdx]);
+         }
+      }
+      free(subsDetails->list.array);
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Deallocation of memory allocated by aper decoder for
+ * RIC Subscription action to be modify
+ *
+ * @details
+ *
+ *    Function : freeAperDecodingOfRicSubsActionToBeModified
+ *
+ *    Functionality: Free the RIC Subscription action to be modify
+ *
+ * @params[in] RICactions_ToBeModifiedForModification_List_t List
+ * @return void
+ *
+ * ****************************************************************/
+void freeAperDecodingOfRicSubsActionToBeModified(RICactions_ToBeModifiedForModification_List_t *subsDetails)
+{
+   uint8_t elementIdx = 0;
+   RICaction_ToBeModifiedForModification_ItemIEs_t *actionItem = NULLP;
+
+   if(subsDetails->list.array)
+   {
+      for(elementIdx = 0; elementIdx < subsDetails->list.count; elementIdx++)
+      {
+         if(subsDetails->list.array[elementIdx])
+         {
+            actionItem = (RICaction_ToBeModifiedForModification_ItemIEs_t *)subsDetails->list.array[elementIdx];
+            if(actionItem->value.choice.RICaction_ToBeModifiedForModification_Item.ricActionDefinition)
+            {
+               free(actionItem->value.choice.RICaction_ToBeModifiedForModification_Item.ricActionDefinition->buf);
+               free(actionItem->value.choice.RICaction_ToBeModifiedForModification_Item.ricActionDefinition);
+            }
+            free(subsDetails->list.array[elementIdx]);
+         }
+      }
+      free(subsDetails->list.array);
+   }
+}
+
+/*******************************************************************
+ *
+ * @brief Deallocation of memory allocated by aper decoder for 
+ * RIC Subscription modification Request
+ *
+ * @details
+ *
+ *    Function freeAperDecodingOfRicSubsModificationReq
+ *
+ * Functionality : Free RIC Subscription modification Request
+ *
+ * @params[in] E2AP_PDU  
+ * @return void
+ *
+ ******************************************************************/
+void freeAperDecodingOfRicSubsModificationReq(E2AP_PDU_t *e2apRicMsg)
+{
+   uint8_t idx = 0;
+   RICsubscriptionModificationRequest_t   *ricSubscriptionModReq;
+   RICsubscriptionModificationRequest_IEs_t *ricSubscriptionModReqIe;
+
+   ricSubscriptionModReq = &e2apRicMsg->choice.initiatingMessage->value.choice.RICsubscriptionModificationRequest;
+   
+   if(ricSubscriptionModReq->protocolIEs.list.array)
+   {
+      for(idx=0; idx < ricSubscriptionModReq->protocolIEs.list.count; idx++)
+      {
+         if(ricSubscriptionModReq->protocolIEs.list.array[idx])
+         {
+            ricSubscriptionModReqIe = ricSubscriptionModReq->protocolIEs.list.array[idx];
+
+            switch(ricSubscriptionModReq->protocolIEs.list.array[idx]->id)
+            {
+               case ProtocolIE_IDE2_id_RICrequestID:
+                  break;
+               
+               case ProtocolIE_IDE2_id_RANfunctionID:
+                  break;
+
+               case ProtocolIE_IDE2_id_RICactionsToBeRemovedForModification_List:
+                  {
+                     freeAperDecodingOfRicSubsActionToBeRemoved(&(ricSubscriptionModReqIe->value.choice.RICactions_ToBeRemovedForModification_List));
+                     break;
+                  }
+               case ProtocolIE_IDE2_id_RICactionsToBeModifiedForModification_List:
+                  {
+                     freeAperDecodingOfRicSubsActionToBeModified(&(ricSubscriptionModReqIe->value.choice.RICactions_ToBeModifiedForModification_List));
+                     break;
+                  }
+               case ProtocolIE_IDE2_id_RICactionsToBeAddedForModification_List:
+                  {
+                     freeAperDecodingOfRicSubsActionToBeAdded(&(ricSubscriptionModReqIe->value.choice.RICactions_ToBeAddedForModification_List));
+                     break;
+                  }
+               default:
+                  {
+                     DU_LOG("\nERROR  -->  E2AP : Received Invalid Ie [%ld]", ricSubscriptionModReq->protocolIEs.list.array[idx]->id);
+                     break;
+                  }
+
+            }
+
+            free(ricSubscriptionModReq->protocolIEs.list.array[idx]);
+         }
+      }
+      free(ricSubscriptionModReq->protocolIEs.list.array);
+   }
+}
+/*******************************************************************
+ *
+ * @brief Extract RIC Action to be added
+ *
+ * @details
+ *
+ *    Function : extractRicActionToBeAddedForModification
+ *
+ * Functionality : This function :
+ *     - [Step -1] Traverse each AddedForModification item indexes.
+ *     - [Step -2] Add each action id related information in 
+ *                 RicSubscription Db.
+ *     - [Step -3] If failed to store then add action related info in 
+ *                 pending rsp's rejectedActionList.
+ *     - [Step -4] Else increment action added count
+ *     - [Step -5] If there is even 1 action that can be added, 
+ *                 return ROK, else RFAILED.
+ *
+ * @params[in] RAN Function Database structure
+ *             RIC Subscription Info to be added to RAN function
+ *             RIC Action To Be AddedForModification List received from RIC
+ *             failure Cause
+ *             Pending Subs Mod Rsp Info
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+uint8_t extractRicActionToBeAddedForModification(RanFunction *ranFuncDb, RicSubscription *ricSubscriptionInfo, \
+      RICactions_ToBeAddedForModification_List_t *actionList, E2FailureCause *failureCause, PendingSubsModRspInfo *subsModRsp)
+{
+   uint8_t actionAdded=0;
+   CmLList *actionNode = NULLP;
+   uint8_t actionIdx = 0;
+   uint8_t ricActionId = 0;
+   RICaction_ToBeAddedForModification_ItemIEs_t *actionItem = NULLP;
+
+   if(actionList->list.array)
+   {
+      for(actionIdx = 0; actionIdx < actionList->list.count; actionIdx++)
+      {
+         /* Step -1 */
+         actionItem =(RICaction_ToBeAddedForModification_ItemIEs_t *)actionList->list.array[actionIdx];
+         switch(actionItem->id)
+         {
+            case ProtocolIE_IDE2_id_RICaction_ToBeAddedForModification_Item:
+               {
+                  /* Step -2 */
+                  actionNode = addRicSubsAction(ranFuncDb, (PTR)&actionItem->value.choice.RICaction_ToBeAddedForModification_Item,\
+                        &ricSubscriptionInfo->actionSequence, ProtocolIE_IDE2_id_RICaction_ToBeAddedForModification_Item, failureCause);
+
+                  if(!actionNode)
+                  {
+                     /* Step -3 */
+                     subsModRsp->addActionStatus.rejectedActionList[subsModRsp->addActionStatus.numOfRejectedActions].id = ricActionId;
+                     if(failureCause->causeType == E2_NOTHING)
+                     {
+                        failureCause->causeType = E2_RIC_REQUEST;
+                        failureCause->cause = E2_CONTROL_FAILED_TO_EXECUTE;
+                     }
+                     memcpy(&subsModRsp->addActionStatus.rejectedActionList[subsModRsp->addActionStatus.numOfRejectedActions].failureCause, \
+                           failureCause, sizeof(E2FailureCause));
+                     subsModRsp->addActionStatus.numOfRejectedActions++;
+                  }
+                  else
+                  {
+                     /* Step -4 */
+                     actionAdded++;
+                  }
+                  break;
+               }
+            default:
+               DU_LOG("\nERROR  -->  E2AP : Invalid IE received in RicAddedForModificationLst:%ld",actionItem->id);
+               break;
+         }
+      }
+   }
+
+   /* Step -5 */
+   if(actionAdded)
+      return ROK;
+
+   if(failureCause->causeType == E2_NOTHING)
+   {
+      failureCause->causeType = E2_RIC_REQUEST;
+      failureCause->cause = E2_ACTION_NOT_SUPPORTED;
+   }
+   return RFAILED;
+}
+
+/*******************************************************************
+ *
+ * @brief Extract RIC Action to be Modified
+ *
+ * @details
+ *
+ *    Function : extractRicActionToBeModifiedForModification
+ *
+ * Functionality : This function :
+ *     - [Step -1] Traverse each Modification item indexes.
+ *     - [Step -2] Find each action id related information in 
+ *                 RicSubscription Db.
+ *     - [Step -3] If not found store the action related info in pending 
+ *                 rsp's action rejected.
+ *     - [Step -4] If found store the new node in action seq list.
+ *          [Step -4.1] If action failed to store, add the action 
+ *                 info in pending subscription rsp's rejected list.
+ *          [Step -4.2] If action stored successfully, change the status 
+ *             of added action to modified because action added as part of
+ *             ric subscription modification req.
+ *     - [Step -5] If there is even 1 action that can be modified, 
+ *                 return ROK, else RFAILED.
+ *
+ * @params[in] RAN Function Database structure
+ *             RIC Subscription Info to be Modified to RAN function
+ *             RIC Action To Be ModifiedForModification List received from RIC
+ *             failure Cause
+ *             Pending Subs Mod Rsp Info
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+uint8_t extractRicActionToBeModifiedForModification(RanFunction *ranFuncDb, RicSubscription *ricSubscriptionInfo, \
+      RICactions_ToBeModifiedForModification_List_t *actionList, E2FailureCause *failureCause, PendingSubsModRspInfo *subsModRsp)
+{
+   uint8_t actionId=0;
+   uint8_t actionIdx = 0;
+   uint8_t actionFound=0;
+   CmLList *actionNode = NULLP;
+   ActionInfo *actionDb = NULLP;
+   RICaction_ToBeModifiedForModification_ItemIEs_t *actionItem = NULLP;
+
+   if(actionList->list.array)
+   {
+      for(actionIdx = 0; actionIdx < actionList->list.count; actionIdx++)
+      {
+         /* [Step -1] */
+         actionItem =(RICaction_ToBeModifiedForModification_ItemIEs_t *)actionList->list.array[actionIdx];
+         switch(actionItem->id)
+         {
+            case ProtocolIE_IDE2_id_RICaction_ToBeModifiedForModification_Item:
+               {
+                  /* [Step -2] */
+                  actionId=actionItem->value.choice.RICaction_ToBeModifiedForModification_Item.ricActionID;
+                  actionDb = fetchActionInfoFromActionId(actionId, ricSubscriptionInfo, &actionNode, CONFIG_UNKNOWN);
+                  if(!actionNode)
+                  {
+                     /* [Step -3] */
+                     subsModRsp->removeActionStatus.rejectedActionList[subsModRsp->modActionStatus.numOfRejectedActions].id = actionDb->actionId;
+                     failureCause->causeType = E2_RIC_REQUEST;
+                     failureCause->cause = E2_ACTION_NOT_SUPPORTED;
+                     memcpy(&subsModRsp->removeActionStatus.rejectedActionList[subsModRsp->modActionStatus.numOfRejectedActions].failureCause, \
+                           failureCause, sizeof(E2FailureCause));
+                     subsModRsp->modActionStatus.numOfRejectedActions++;
+                  }
+                  else
+                  {
+                     /* [Step -4] */
+                     actionNode = NULLP;
+                     actionNode = addRicSubsAction(ranFuncDb, (PTR)&actionItem->value.choice.RICaction_ToBeModifiedForModification_Item,\
+                           &ricSubscriptionInfo->actionSequence, ProtocolIE_IDE2_id_RICaction_ToBeModifiedForModification_Item, failureCause);
+
+                     if(!actionNode)
+                     {
+                        /* [Step -4.1] */
+                        subsModRsp->modActionStatus.rejectedActionList[subsModRsp->modActionStatus.numOfRejectedActions].id = actionId;
+                        if(failureCause->causeType == E2_NOTHING)
+                        {
+                           failureCause->causeType = E2_RIC_REQUEST;
+                           failureCause->cause = E2_CONTROL_FAILED_TO_EXECUTE;
+                        }
+                        memcpy(&subsModRsp->modActionStatus.rejectedActionList[subsModRsp->modActionStatus.numOfRejectedActions].failureCause, \
+                              failureCause, sizeof(E2FailureCause));
+                        subsModRsp->addActionStatus.numOfRejectedActions++;
+                     }
+                     else
+                     {
+                        /* [Step -4.2] */
+                        actionDb = (ActionInfo*)actionNode->node;
+                        actionDb->action=CONFIG_MOD;
+                        actionFound++;
+                     }
+                     break;
+                  }
+                  break;
+               }
+            default:
+               DU_LOG("\nERROR  -->  E2AP : Invalid IE received in RicModifiedForModificationLst:%ld",actionItem->id);
+               break;
+         }
+      }
+   }
+
+   /* [Step -5] */
+   if(actionFound)
+      return ROK;
+
+   return RFAILED;
+}
+
+/*******************************************************************
+ *
+ * @brief Extract RIC Action to be Removed
+ *
+ * @details
+ *
+ *    Function : extractRicActionToBeRemovedForModification
+ *
+ * Functionality : This function :
+ *     - [Step -1] Traverse each RemovedForModification item indexes.
+ *     - [Step -2] Find each action id related information in 
+ *                 RicSubscription Db.
+ *     - [Step -3] If not found store the action related info in pending 
+ *                 rsp's rejectedActionList.
+ *     - [Step -4] If found mark action's status CONFIG_DEL.
+ *     - [Step -5] If there is even 1 action that can be Removed, 
+ *                 return ROK, else RFAILED.
+ *
+ * @params[in] RAN Function Database structure
+ *             RIC Subscription Info to be Removed to RAN function
+ *             RIC Action To Be RemovedForModification List received from RIC
+ *             failure Cause
+ *             Pending ric subs mod Rsp Info to store failure result
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+uint8_t extractRicActionToBeRemovedForModification(RanFunction *ranFuncDb, RicSubscription *ricSubscriptionInfo, \
+      RICactions_ToBeRemovedForModification_List_t *actionList, E2FailureCause *failureCause, PendingSubsModRspInfo *subsModRsp)
+{
+   uint8_t actionId=0;
+   uint8_t actionIdx = 0;
+   uint8_t actionFound=0;
+   CmLList *actionNode = NULLP;
+   ActionInfo *actionDb = NULLP;
+   RICaction_ToBeRemovedForModification_ItemIEs_t *actionItem = NULLP;
+
+   if(actionList->list.array)
+   {
+      for(actionIdx = 0; actionIdx < actionList->list.count; actionIdx++)
+      {
+         /* [Step -1] */
+         actionItem =(RICaction_ToBeRemovedForModification_ItemIEs_t *)actionList->list.array[actionIdx];
+         switch(actionItem->id)
+         {
+            case ProtocolIE_IDE2_id_RICaction_ToBeRemovedForModification_Item:
+               {
+                  /* [Step -2] */
+                  actionId = actionItem->value.choice.RICaction_ToBeRemovedForModification_Item.ricActionID;
+                  actionDb = fetchActionInfoFromActionId(actionId, ricSubscriptionInfo, &actionNode, CONFIG_UNKNOWN);
+                  if(!actionNode)
+                  {
+                     /* [Step -3] */
+                     subsModRsp->removeActionStatus.rejectedActionList[subsModRsp->removeActionStatus.numOfRejectedActions].id = actionDb->actionId;
+                     if(failureCause->causeType == E2_NOTHING)
+                     {
+                        failureCause->causeType = E2_RIC_REQUEST;
+                        failureCause->cause = E2_ACTION_NOT_SUPPORTED;
+                     }
+                     memcpy(&subsModRsp->removeActionStatus.rejectedActionList[subsModRsp->removeActionStatus.numOfRejectedActions].failureCause, \
+                           failureCause, sizeof(E2FailureCause));
+                     subsModRsp->removeActionStatus.numOfRejectedActions++;
+                  }
+                  else
+                  {
+                     /* [Step -4] */
+                     actionDb->action=CONFIG_DEL;
+                     actionFound++;
+                  }
+                  break;
+               }
+            default:
+               DU_LOG("\nERROR  -->  E2AP : Invalid IE received in RicRemovedForModificationLst:%ld",actionItem->id);
+               break;
+         }
+      }
+   }
+
+   /* [Step -5] */
+   if(actionFound)
+      return ROK;
+
+   return RFAILED;
+}
+
+/*******************************************************************
+ *
+ * @brief Process RIC Subscription modification request
+ *
+ * @details
+ *
+ *    Function : procRicSubscriptionModificationRequest
+ *
+ * Functionality: Process RIC subscription modification request.
+ *
+ * @params[in] E2AP PDU
+ * @return void
+ *
+ ******************************************************************/
+void procRicSubscriptionModificationRequest(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx = 0;
+   uint16_t ranFuncId = 0;
+   RicRequestId ricReqId;
+   E2FailureCause failureCause;
+   bool procFailure = false;
+   bool addActionIeProcessed=false;
+   bool modActionIeProcessed =false;
+   bool removeActionIeProcessed =false;
+   CmLList *ricSubsNode = NULLP;
+   RanFunction *ranFuncDb = NULLP;
+   RicSubscription *ricSubsDb = NULLP;
+   RICsubscriptionModificationRequest_t *ricSubsModifyReq = NULLP;
+   RICsubscriptionModificationRequest_IEs_t *ricSubsModifyReqIe = NULLP;
+   
+   DU_LOG("\nINFO   -->  E2AP : %s: Received RIC Subscription Modification Request", __func__);
+
+   do{
+      if(!e2apMsg)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: E2AP Message is NULL", __func__);
+         break;
+      }
+
+      if(!e2apMsg->choice.initiatingMessage)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Initiating Message in E2AP PDU is NULL", __func__);
+         break;
+      }
+
+      ricSubsModifyReq =  &e2apMsg->choice.initiatingMessage->value.choice.RICsubscriptionModificationRequest;
+      for(ieIdx = 0; ieIdx < ricSubsModifyReq->protocolIEs.list.count; ieIdx++)
+      {
+         if(!ricSubsModifyReq->protocolIEs.list.array[ieIdx])
+         {
+            DU_LOG("\nERROR  -->  E2AP : %s: IE at index [%d] in E2AP message IEs list is null", __func__, ieIdx);
+            break;
+         }
+
+         ricSubsModifyReqIe = ricSubsModifyReq->protocolIEs.list.array[ieIdx];
+         switch(ricSubsModifyReqIe->id)
+         {
+            case ProtocolIE_IDE2_id_RICrequestID:
+               {
+                  memset(&ricReqId, 0, sizeof(RicRequestId));
+                  ricReqId.requestorId = ricSubsModifyReqIe->value.choice.RICrequestID.ricRequestorID;
+                  ricReqId.instanceId = ricSubsModifyReqIe->value.choice.RICrequestID.ricInstanceID;
+                  break;
+               }
+
+            case ProtocolIE_IDE2_id_RANfunctionID:
+               {
+                  ranFuncId = ricSubsModifyReqIe->value.choice.RANfunctionID;
+                  ranFuncDb = fetchRanFuncFromRanFuncId(ranFuncId);
+                  if(!ranFuncDb)
+                  {
+                     DU_LOG("\nERROR  -->  E2AP : %s: RAN Function ID [%d] not found", __func__, ranFuncId);
+                     procFailure = true;
+                     break;
+                  }
+
+                  ricSubsDb = fetchSubsInfoFromRicReqId(ricReqId, ranFuncDb, &ricSubsNode);
+                  if(!ricSubsDb)
+                  {
+                     DU_LOG("\nERROR  -->  E2AP : %s: RIC Subscription not found for Requestor_ID [%d] Instance_ID [%d]",\
+                           __func__, ricReqId.requestorId, ricReqId.instanceId);
+                     procFailure = true;
+                     break;
+                  }
+                  memset(&ranFuncDb->pendingSubsModRspInfo[ranFuncDb->numPendingSubsModRsp], 0, sizeof(PendingSubsModRspInfo));
+                  memcpy(&ranFuncDb->pendingSubsModRspInfo[ranFuncDb->numPendingSubsModRsp].requestId, 
+                        &ricReqId, sizeof(RicRequestId));
+                  ranFuncDb->pendingSubsModRspInfo[ranFuncDb->numPendingSubsModRsp].ranFuncId = ranFuncId;
+
+                  break;
+               }
+            case ProtocolIE_IDE2_id_RICactionsToBeRemovedForModification_List:
+               {
+                  if(extractRicActionToBeRemovedForModification(ranFuncDb, ricSubsDb,\
+                  &ricSubsModifyReqIe->value.choice.RICactions_ToBeRemovedForModification_List,\
+                  &failureCause, &ranFuncDb->pendingSubsModRspInfo[ranFuncDb->numPendingSubsModRsp]) == ROK)
+                  {
+                     removeActionIeProcessed= true;
+                  }
+
+                  break;
+               }
+            case ProtocolIE_IDE2_id_RICactionsToBeModifiedForModification_List:
+               {
+                  if(extractRicActionToBeModifiedForModification(ranFuncDb, ricSubsDb,\
+                  &ricSubsModifyReqIe->value.choice.RICactions_ToBeModifiedForModification_List,\
+                  &failureCause, &ranFuncDb->pendingSubsModRspInfo[ranFuncDb->numPendingSubsModRsp]) == ROK)
+                  {
+                     modActionIeProcessed = true;
+                  }
+                  break;
+               }
+            case ProtocolIE_IDE2_id_RICactionsToBeAddedForModification_List:
+               {
+                  if(extractRicActionToBeAddedForModification(ranFuncDb, ricSubsDb,\
+                  &ricSubsModifyReqIe->value.choice.RICactions_ToBeAddedForModification_List,\
+                  &failureCause, &ranFuncDb->pendingSubsModRspInfo[ranFuncDb->numPendingSubsModRsp]) == ROK)
+                  {
+                     addActionIeProcessed = true;
+                  }
+                  break;
+               }
+            default:
+               break;
+         } /* End of switch for Protocol IE Id */
+
+         if(procFailure)
+            break;
+      } /* End of for loop for Protocol IE list */
+
+      break;
+   }while(true);
+   
+   if(!removeActionIeProcessed && !addActionIeProcessed && !modActionIeProcessed)
+   {
+      BuildAndSendRicSubscriptionModificationFailure(ranFuncId, ricReqId, failureCause);
+   }
+   else
+   {
+      if(duChkTmr((PTR)ricSubsDb, EVENT_RIC_SUBSCRIPTION_REPORTING_TMR) == true)
+      {
+         duStopTmr((PTR)ricSubsDb, EVENT_RIC_SUBSCRIPTION_REPORTING_TMR);
+      }
+
+      ricSubsDb->action = CONFIG_MOD;
+      ranFuncDb->numPendingSubsModRsp++;
+      
+      /*If the remove-action ie is present, send a stats delete request; 
+       * otherwise, change removeActionCompleted to true in the pendingSubsModRspInfo. */
+      if(removeActionIeProcessed)
+      {
+         BuildAndSendStatsDeleteReq(ricSubsDb, false);
+      }
+      else
+      {
+         ranFuncDb->pendingSubsModRspInfo[ranFuncDb->numPendingSubsModRsp-1].removeActionCompleted = true;
+      }
+      
+      /*If the mod-action ie is present, send a stats modification request; 
+       * otherwise, change modActionCompleted to true in the pendingSubsModRspInfo. */
+      if(modActionIeProcessed)
+      {
+         BuildAndSendStatsModificationReq(ricSubsDb);
+      }
+      else
+      {
+         ranFuncDb->pendingSubsModRspInfo[ranFuncDb->numPendingSubsModRsp-1].modActionCompleted= true;
+      }
+
+      /*If the add-action ie is present, send a stats add request; 
+       * otherwise, change addActionCompleted to true in the pendingSubsModRspInfo. */
+      if(addActionIeProcessed)
+      {
+         BuildAndSendStatsReq(ricSubsDb);
+      }
+      else
+      {
+         ranFuncDb->pendingSubsModRspInfo[ranFuncDb->numPendingSubsModRsp-1].addActionCompleted= true;
+      }
+
+   }
+
+   freeAperDecodingOfRicSubsModificationReq(e2apMsg);
+}
+
+/*******************************************************************
+ * @brief Free RIC Subscription Modification Failure Message
+ *
+ * @details
+ *
+ *    Function : FreeRicSubscriptionModificationFailure
+ *
+ * Functionality:  Free RIC Subscription Modification Failure
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+void FreeRicSubscriptionModificationFailure(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx = 0;
+   RICsubscriptionModificationFailure_t *ricSubsModFailure = NULLP;
+
+   if(e2apMsg)
+   {
+      if(e2apMsg->choice.unsuccessfulOutcome)
+      {
+         ricSubsModFailure = &e2apMsg->choice.unsuccessfulOutcome->value.choice.RICsubscriptionModificationFailure;
+         if(ricSubsModFailure->protocolIEs.list.array)
+         {
+            for(ieIdx = 0; ieIdx < ricSubsModFailure->protocolIEs.list.count; ieIdx++)
+            {
+               DU_FREE(ricSubsModFailure->protocolIEs.list.array[ieIdx], sizeof(RICsubscriptionModificationFailure_IEs_t));
+            }
+            DU_FREE(ricSubsModFailure->protocolIEs.list.array, ricSubsModFailure->protocolIEs.list.size);
+         }
+         DU_FREE(e2apMsg->choice.unsuccessfulOutcome, sizeof(UnsuccessfulOutcomeE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));;
+   }
+}
+/*******************************************************************
+ *
+ * @brief Builds and Send RIC Subscription Modification Failure
+ *
+ * @details
+ *
+ *    Function : BuildAndSendRicSubscriptionModificationFailure
+ *
+ * Functionality: Build and send RIC Subscription Modification Failure.
+ *
+ * @params[in]
+ *          Ran Func Id
+ *          Ric Req Id
+ *          E2 failure cause
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+uint8_t BuildAndSendRicSubscriptionModificationFailure(uint16_t ranFuncId,  RicRequestId requestId, E2FailureCause failureCause)
+{
+   uint8_t elementCnt = 0, ieIdx = 0, ret = RFAILED;
+   E2AP_PDU_t         *e2apMsg = NULLP;
+   RICsubscriptionModificationFailure_t *ricSubsModFailure = NULLP;
+   RICsubscriptionModificationFailure_IEs_t *ricSubsModFailureIe = NULLP;
+   asn_enc_rval_t     encRetVal;        /* Encoder return value */
+
+   while(true)
+   {
+      DU_LOG("\nINFO   -->  E2AP : Building RIC Subscription Modification Failure Message\n");
+
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->present = E2AP_PDU_PR_unsuccessfulOutcome;
+      DU_ALLOC(e2apMsg->choice.unsuccessfulOutcome, sizeof(UnsuccessfulOutcomeE2_t));
+      if(e2apMsg->choice.unsuccessfulOutcome == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         break;
+      }
+      e2apMsg->choice.unsuccessfulOutcome->procedureCode = ProcedureCodeE2_id_RICsubscriptionModification;
+      e2apMsg->choice.unsuccessfulOutcome->criticality = CriticalityE2_reject;
+      e2apMsg->choice.unsuccessfulOutcome->value.present = UnsuccessfulOutcomeE2__value_PR_RICsubscriptionModificationFailure;
+
+
+      ricSubsModFailure = &e2apMsg->choice.unsuccessfulOutcome->value.choice.RICsubscriptionModificationFailure;
+
+      elementCnt = 3;
+      ricSubsModFailure->protocolIEs.list.count = elementCnt;
+      ricSubsModFailure->protocolIEs.list.size = elementCnt * sizeof(RICsubscriptionModificationFailure_IEs_t *);
+
+      DU_ALLOC(ricSubsModFailure->protocolIEs.list.array, ricSubsModFailure->protocolIEs.list.size);
+      if(ricSubsModFailure->protocolIEs.list.array == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation failed for array elements at line %d",__func__, __LINE__);
+         break;
+      }
+
+      for(ieIdx = 0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(ricSubsModFailure->protocolIEs.list.array[ieIdx], sizeof(RICsubscriptionModificationFailure_IEs_t));
+         if(ricSubsModFailure->protocolIEs.list.array[ieIdx] == NULLP)
+         {
+            DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation failed for index [%d] at line %d", \
+                  __func__, ieIdx, __LINE__);
+            break;
+         }
+      }
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      ricSubsModFailureIe = ricSubsModFailure->protocolIEs.list.array[ieIdx];
+      ricSubsModFailureIe->id = ProtocolIE_IDE2_id_RICrequestID;
+      ricSubsModFailureIe->criticality = CriticalityE2_reject;
+      ricSubsModFailureIe->value.present = RICsubscriptionModificationFailure_IEs__value_PR_RICrequestID;
+      ricSubsModFailureIe->value.choice.RICrequestID.ricRequestorID= requestId.requestorId;
+      ricSubsModFailureIe->value.choice.RICrequestID.ricInstanceID = requestId.instanceId;
+
+      ieIdx++;
+      ricSubsModFailureIe = ricSubsModFailure->protocolIEs.list.array[ieIdx];
+      ricSubsModFailureIe->id = ProtocolIE_IDE2_id_RANfunctionID;
+      ricSubsModFailureIe->criticality = CriticalityE2_reject;
+      ricSubsModFailureIe->value.present = RICsubscriptionModificationFailure_IEs__value_PR_RANfunctionID;
+      ricSubsModFailureIe->value.choice.RANfunctionID = ranFuncId;
+
+      ieIdx++;
+      ricSubsModFailureIe = ricSubsModFailure->protocolIEs.list.array[ieIdx];
+      ricSubsModFailureIe->id = ProtocolIE_IDE2_id_CauseE2;
+      ricSubsModFailureIe->criticality = CriticalityE2_reject;
+      ricSubsModFailureIe->value.present = RICsubscriptionModificationFailure_IEs__value_PR_CauseE2;
+      fillE2Cause(&ricSubsModFailureIe->value.choice.CauseE2, failureCause);
+
+      /* Prints the Msg formed */
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf, encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode RIC Subscription Modification Failure Message (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : Created APER encoded buffer for RIC Subscription Modification Failure Message \n");
+#ifdef DEBUG_ASN_PRINT
+         for(int i=0; i< encBufSize; i++)
+         {
+            printf("%x",encBuf[i]);
+         }
+#endif
+      }
+
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR   -->  E2AP : Failed to send RIC Susbcription Modification Failure Message");
+         break;
+      }
+
+      ret = ROK;
+      break;
+   }
+
+   FreeRicSubscriptionModificationFailure(e2apMsg);
+   return ret;
+}
+
+/*******************************************************************
+ * @brief Free RIC Subscription Modification Response Message
+ *
+ * @details
+ *
+ *    Function : FreeRicSubscriptionModificationResponse
+ *
+ * Functionality:  Free RIC Subscription Modification Response
+ *
+ * @param  E2AP Message PDU
+ * @return void
+ *
+ ******************************************************************/
+void FreeRicSubscriptionModificationResponse(E2AP_PDU_t *e2apMsg)
+{
+   uint8_t ieIdx = 0, elementIdx=0;
+   RICactions_AddedForModification_List_t *actionsAdded = NULLP;
+   RICactions_RemovedForModification_List_t *actionsRemoved = NULLP;
+   RICactions_ModifiedForModification_List_t *actionsModified = NULLP;
+   RICactions_FailedToBeAddedForModification_List_t  *actionsFailedToBeAdded = NULLP;
+   RICactions_FailedToBeRemovedForModification_List_t *actionsFailedToBeRemoved = NULLP;
+   RICactions_FailedToBeModifiedForModification_List_t *actionsFailedToBeModified = NULLP;
+
+   RICsubscriptionModificationResponse_t *ricSubsModResponse = NULLP;
+
+   if(e2apMsg)
+   {
+      if(e2apMsg->choice.successfulOutcome)
+      {
+         ricSubsModResponse = &e2apMsg->choice.successfulOutcome->value.choice.RICsubscriptionModificationResponse;
+         if(ricSubsModResponse->protocolIEs.list.array)
+         {
+            for(ieIdx = 0; ieIdx < ricSubsModResponse->protocolIEs.list.count; ieIdx++)
+            {
+               if(ricSubsModResponse->protocolIEs.list.array[ieIdx])
+               {
+                  switch(ricSubsModResponse->protocolIEs.list.array[ieIdx]->id)
+                  {
+                     case ProtocolIE_IDE2_id_RANfunctionID:
+                     case ProtocolIE_IDE2_id_RICrequestID:
+                        break;
+                     case ProtocolIE_IDE2_id_RICactionsRemovedForModification_List:
+                        {
+                           actionsRemoved = &ricSubsModResponse->protocolIEs.list.array[ieIdx]->value.choice.RICactions_RemovedForModification_List;
+                           if(actionsRemoved->list.array)
+                           {
+                              for(elementIdx = 0; elementIdx < actionsRemoved->list.count; elementIdx++)
+                              {
+                                 DU_FREE(actionsRemoved->list.array[elementIdx], sizeof(RICaction_RemovedForModification_ItemIEs_t));
+                              }
+                              DU_FREE(actionsRemoved->list.array, actionsRemoved->list.size);
+                           }
+                           break;
+                        }
+
+                     case ProtocolIE_IDE2_id_RICactionsFailedToBeRemovedForModification_List:
+                        {
+                           actionsFailedToBeRemoved = &ricSubsModResponse->protocolIEs.list.array[ieIdx]->value.choice.RICactions_FailedToBeRemovedForModification_List;
+                           if(actionsFailedToBeRemoved->list.array)
+                           {
+                              for(elementIdx = 0; elementIdx < actionsFailedToBeRemoved->list.count; elementIdx++)
+                              {
+                                 DU_FREE(actionsFailedToBeRemoved->list.array[elementIdx], sizeof(RICaction_FailedToBeRemovedForModification_ItemIEs_t));
+                              }
+                              DU_FREE(actionsFailedToBeRemoved->list.array, actionsFailedToBeRemoved->list.size);
+                           }
+                           break;
+                        }
+                     case ProtocolIE_IDE2_id_RICactionsModifiedForModification_List:
+                        {
+                           actionsModified = &ricSubsModResponse->protocolIEs.list.array[ieIdx]->value.choice.RICactions_ModifiedForModification_List;
+                           if(actionsModified->list.array)
+                           {
+                              for(elementIdx = 0; elementIdx < actionsModified->list.count; elementIdx++)
+                              {
+                                 DU_FREE(actionsModified->list.array[elementIdx], sizeof(RICaction_ModifiedForModification_ItemIEs_t));
+                              }
+                              DU_FREE(actionsModified->list.array, actionsModified->list.size);
+                           }
+                           break;
+                        }
+                     case ProtocolIE_IDE2_id_RICactionsFailedToBeModifiedForModification_List:
+                        {
+                           actionsFailedToBeModified = &ricSubsModResponse->protocolIEs.list.array[ieIdx]->value.choice.RICactions_FailedToBeModifiedForModification_List;
+                           if(actionsFailedToBeModified->list.array)
+                           {
+                              for(elementIdx = 0; elementIdx < actionsFailedToBeModified->list.count; elementIdx++)
+                              {
+                                 DU_FREE(actionsFailedToBeModified->list.array[elementIdx], sizeof(RICaction_FailedToBeModifiedForModification_ItemIEs_t));
+                              }
+                              DU_FREE(actionsFailedToBeModified->list.array, actionsFailedToBeModified->list.size);
+                           }
+                           break;
+                        }
+                     case ProtocolIE_IDE2_id_RICactionsAddedForModification_List:
+                        {
+                           actionsAdded = &ricSubsModResponse->protocolIEs.list.array[ieIdx]->value.choice.RICactions_AddedForModification_List;
+                           if(actionsAdded->list.array)
+                           {
+                              for(elementIdx = 0; elementIdx < actionsAdded->list.count; elementIdx++)
+                              {
+                                 DU_FREE(actionsAdded->list.array[elementIdx], sizeof(RICaction_AddedForModification_ItemIEs_t));
+                              }
+                              DU_FREE(actionsAdded->list.array, actionsAdded->list.size);
+                           }
+                           break;
+                        }
+                     case ProtocolIE_IDE2_id_RICactionsFailedToBeAddedForModification_List:
+                        {
+                           actionsFailedToBeAdded = &ricSubsModResponse->protocolIEs.list.array[ieIdx]->value.choice.RICactions_FailedToBeAddedForModification_List;
+                           if(actionsFailedToBeAdded->list.array)
+                           {
+                              for(elementIdx = 0; elementIdx < actionsFailedToBeAdded->list.count; elementIdx++)
+                              {
+                                 DU_FREE(actionsFailedToBeAdded->list.array[elementIdx], sizeof(RICaction_FailedToBeAddedForModification_ItemIEs_t));
+                              }
+                              DU_FREE(actionsFailedToBeAdded->list.array, actionsFailedToBeAdded->list.size);
+                           }
+                           break;
+                        }
+                  }
+                  DU_FREE(ricSubsModResponse->protocolIEs.list.array[ieIdx], sizeof(RICsubscriptionModificationResponse_IEs_t));
+               }
+            }
+            DU_FREE(ricSubsModResponse->protocolIEs.list.array, ricSubsModResponse->protocolIEs.list.size);
+         }
+         DU_FREE(e2apMsg->choice.successfulOutcome, sizeof(SuccessfulOutcomeE2_t));
+      }
+      DU_FREE(e2apMsg, sizeof(E2AP_PDU_t));;
+   }
+}
+
+/*******************************************************************
+*
+* @brief Build Ric subscription action removed list
+*
+* @details
+*
+*    Function : BuildActionRemovedList
+*
+*    Functionality: Build Ric subs action removed list
+*
+* @params[in]
+*    RICactions_RemovedForModification_List_t to be filled
+*    Num Of Action removed
+*    Action removed list
+*
+* @return ROK     - success
+*         RFAILED - failure
+*
+******************************************************************/
+
+uint8_t BuildActionRemovedList(RICactions_RemovedForModification_List_t *removedActionList, uint8_t numOfActionRemoved, uint8_t *actionRemoved)
+{
+   uint8_t arrIdx=0;
+   RICaction_RemovedForModification_ItemIEs_t *removedActionItemIe =NULLP;
+
+   removedActionList->list.count = numOfActionRemoved;
+   removedActionList->list.size = removedActionList->list.count *  sizeof(RICaction_RemovedForModification_ItemIEs_t*);
+   DU_ALLOC(removedActionList->list.array, removedActionList->list.size);
+   if(!removedActionList->list.array)
+   {
+      DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+      return RFAILED;
+   }
+
+   for(arrIdx = 0; arrIdx< removedActionList->list.count; arrIdx++)
+   {
+      DU_ALLOC(removedActionList->list.array[arrIdx], sizeof(RICaction_RemovedForModification_ItemIEs_t));
+      if(!removedActionList->list.array[arrIdx])
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+         return RFAILED;
+      }
+      removedActionItemIe = (RICaction_RemovedForModification_ItemIEs_t*)removedActionList->list.array[arrIdx];
+      removedActionItemIe->id = ProtocolIE_IDE2_id_RICaction_RemovedForModification_Item;
+      removedActionItemIe->criticality = CriticalityE2_ignore;
+      removedActionItemIe->value.present = RICaction_RemovedForModification_ItemIEs__value_PR_RICaction_RemovedForModification_Item;
+      removedActionItemIe->value.choice.RICaction_RemovedForModification_Item.ricActionID = actionRemoved[arrIdx];
+   }
+   return ROK;
+}
+
+/*******************************************************************
+*
+* @brief Build Ric subscription action added list
+*
+* @details
+*
+*    Function : BuildActionAddedList
+*
+*    Functionality: Build Ric subs action added list
+*
+* @params[in]
+*    RICactions_AddedForModification_List_t to be filled
+*    Num Of Action added
+*    Action added list
+*
+* @return ROK     - success
+*         RFAILED - failure
+*
+******************************************************************/
+
+uint8_t BuildActionAddedList(RICactions_AddedForModification_List_t *addedActionList, uint8_t numOfActionAdded, uint8_t *actionAdded)
+{
+   uint8_t arrIdx=0;
+   RICaction_AddedForModification_ItemIEs_t *addedActionItemIe =NULLP;
+
+   addedActionList->list.count = numOfActionAdded;
+   addedActionList->list.size = addedActionList->list.count *  sizeof(RICaction_AddedForModification_ItemIEs_t*);
+   DU_ALLOC(addedActionList->list.array, addedActionList->list.size);
+   if(!addedActionList->list.array)
+   {
+      DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+      return RFAILED;
+   }
+
+   for(arrIdx = 0; arrIdx< addedActionList->list.count; arrIdx++)
+   {
+      DU_ALLOC(addedActionList->list.array[arrIdx], sizeof(RICaction_AddedForModification_ItemIEs_t));
+      if(!addedActionList->list.array[arrIdx])
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+         return RFAILED;
+      }
+      addedActionItemIe = (RICaction_AddedForModification_ItemIEs_t*)addedActionList->list.array[arrIdx];
+      addedActionItemIe->id = ProtocolIE_IDE2_id_RICaction_AddedForModification_Item;
+      addedActionItemIe->criticality = CriticalityE2_ignore;
+      addedActionItemIe->value.present = RICaction_AddedForModification_ItemIEs__value_PR_RICaction_AddedForModification_Item;
+      addedActionItemIe->value.choice.RICaction_AddedForModification_Item.ricActionID = actionAdded[arrIdx];
+   }
+   return ROK;
+}
+
+/*******************************************************************
+*
+* @brief Build Ric subscription action modified list
+*
+* @details
+*
+*    Function : BuildActionModifiedList
+*
+*    Functionality: Build Ric subs action modified list
+*
+* @params[in]
+*    RICactions_ModifiedForModification_List_t to be filled
+*    Num Of Action modified
+*    Action modified list
+*
+* @return ROK     - success
+*         RFAILED - failure
+*
+******************************************************************/
+
+uint8_t BuildActionModifiedList(RICactions_ModifiedForModification_List_t *modifiedActionList, uint8_t numOfActionModified, uint8_t *actionModified)
+{
+   uint8_t arrIdx=0;
+   RICaction_ModifiedForModification_ItemIEs_t *modifiedActionItemIe =NULLP;
+
+   modifiedActionList->list.count = numOfActionModified;
+   modifiedActionList->list.size = modifiedActionList->list.count *  sizeof(RICaction_ModifiedForModification_ItemIEs_t*);
+   DU_ALLOC(modifiedActionList->list.array, modifiedActionList->list.size);
+   if(!modifiedActionList->list.array)
+   {
+      DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+      return RFAILED;
+   }
+
+   for(arrIdx = 0; arrIdx< modifiedActionList->list.count; arrIdx++)
+   {
+      DU_ALLOC(modifiedActionList->list.array[arrIdx], sizeof(RICaction_ModifiedForModification_ItemIEs_t));
+      if(!modifiedActionList->list.array[arrIdx])
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+         return RFAILED;
+      }
+      modifiedActionItemIe = (RICaction_ModifiedForModification_ItemIEs_t*)modifiedActionList->list.array[arrIdx];
+      modifiedActionItemIe->id = ProtocolIE_IDE2_id_RICaction_ModifiedForModification_Item;
+      modifiedActionItemIe->criticality = CriticalityE2_ignore;
+      modifiedActionItemIe->value.present = RICaction_ModifiedForModification_ItemIEs__value_PR_RICaction_ModifiedForModification_Item;
+      modifiedActionItemIe->value.choice.RICaction_ModifiedForModification_Item.ricActionID = actionModified[arrIdx];
+   }
+   return ROK;
+}
+
+/*******************************************************************
+ *
+ * @brief Build Ric subscription action failed to be removed list
+ *
+ * @details
+ *
+ *    Function : BuildActionFailedToBeRemovedList
+ *
+ *    Functionality: Build Ric subs action failed to be removed list
+ *
+ * @params[in]
+ *    RICactions_FailedToBeRemovedForModification_List_t to be filled
+ *    Num Of Action failed to be removed
+ *    Action failed to be removed list
+ *
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+
+uint8_t BuildActionFailedToBeRemovedList(RICactions_FailedToBeRemovedForModification_List_t *failedToBeRemovedActionList,\
+uint8_t numOfActionFailedToBeRemoved, RejectedAction *actionFailedToBeRemoved)
+{
+   uint8_t arrIdx=0;
+   RICaction_FailedToBeRemovedForModification_ItemIEs_t *failedToBeRemovedActionItemIe =NULLP;
+
+   failedToBeRemovedActionList->list.count = numOfActionFailedToBeRemoved;
+   failedToBeRemovedActionList->list.size = failedToBeRemovedActionList->list.count *  sizeof(RICaction_FailedToBeRemovedForModification_ItemIEs_t*);
+   DU_ALLOC(failedToBeRemovedActionList->list.array, failedToBeRemovedActionList->list.size);
+   if(!failedToBeRemovedActionList->list.array)
+   {
+      DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+      return RFAILED;
+   }
+
+   for(arrIdx = 0; arrIdx< failedToBeRemovedActionList->list.count; arrIdx++)
+   {
+      DU_ALLOC(failedToBeRemovedActionList->list.array[arrIdx], sizeof(RICaction_FailedToBeRemovedForModification_ItemIEs_t));
+      if(!failedToBeRemovedActionList->list.array[arrIdx])
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+         return RFAILED;
+      }
+      failedToBeRemovedActionItemIe = (RICaction_FailedToBeRemovedForModification_ItemIEs_t*)failedToBeRemovedActionList->list.array[arrIdx];
+      failedToBeRemovedActionItemIe->id = ProtocolIE_IDE2_id_RICaction_FailedToBeRemovedForModification_Item;
+      failedToBeRemovedActionItemIe->criticality = CriticalityE2_ignore;
+      failedToBeRemovedActionItemIe->value.present = RICaction_FailedToBeRemovedForModification_ItemIEs__value_PR_RICaction_FailedToBeRemovedForModification_Item;
+      failedToBeRemovedActionItemIe->value.choice.RICaction_FailedToBeRemovedForModification_Item.ricActionID = actionFailedToBeRemoved[arrIdx].id;
+      fillE2Cause(&failedToBeRemovedActionItemIe->value.choice.RICaction_FailedToBeRemovedForModification_Item.cause, actionFailedToBeRemoved[arrIdx].failureCause);
+   }
+   return ROK;
+}
+
+/*******************************************************************
+ *
+ * @brief Build Ric subscription action failed to be modified list
+ *
+ * @details
+ *
+ *    Function : BuildActionFailedToBeModifiedList
+ *
+ *    Functionality: Build Ric subs action failed to be modified list
+ *
+ * @params[in]
+ *    RICactions_FailedToBeModifiedForModification_List_t to be filled
+ *    Num Of Action failed to be modified
+ *    Action failed to be modified list
+ *
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+
+uint8_t BuildActionFailedToBeModifiedList(RICactions_FailedToBeModifiedForModification_List_t *failedToBeModifiedActionList,\
+uint8_t numOfActionFailedToBeModified, RejectedAction *actionFailedToBeModified)
+{
+   uint8_t arrIdx=0;
+   RICaction_FailedToBeModifiedForModification_ItemIEs_t *failedToBeModifiedActionItemIe =NULLP;
+
+   failedToBeModifiedActionList->list.count = numOfActionFailedToBeModified;
+   failedToBeModifiedActionList->list.size = failedToBeModifiedActionList->list.count *  sizeof(RICaction_FailedToBeModifiedForModification_ItemIEs_t*);
+   DU_ALLOC(failedToBeModifiedActionList->list.array, failedToBeModifiedActionList->list.size);
+   if(!failedToBeModifiedActionList->list.array)
+   {
+      DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+      return RFAILED;
+   }
+
+   for(arrIdx = 0; arrIdx< failedToBeModifiedActionList->list.count; arrIdx++)
+   {
+      DU_ALLOC(failedToBeModifiedActionList->list.array[arrIdx], sizeof(RICaction_FailedToBeModifiedForModification_ItemIEs_t));
+      if(!failedToBeModifiedActionList->list.array[arrIdx])
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+         return RFAILED;
+      }
+      failedToBeModifiedActionItemIe = (RICaction_FailedToBeModifiedForModification_ItemIEs_t*)failedToBeModifiedActionList->list.array[arrIdx];
+      failedToBeModifiedActionItemIe->id = ProtocolIE_IDE2_id_RICaction_FailedToBeModifiedForModification_Item;
+      failedToBeModifiedActionItemIe->criticality = CriticalityE2_ignore;
+      failedToBeModifiedActionItemIe->value.present = RICaction_FailedToBeModifiedForModification_ItemIEs__value_PR_RICaction_FailedToBeModifiedForModification_Item;
+      failedToBeModifiedActionItemIe->value.choice.RICaction_FailedToBeModifiedForModification_Item.ricActionID = actionFailedToBeModified[arrIdx].id;
+      fillE2Cause(&failedToBeModifiedActionItemIe->value.choice.RICaction_FailedToBeModifiedForModification_Item.cause, actionFailedToBeModified[arrIdx].failureCause);
+   }
+   return ROK;
+}
+
+/*******************************************************************
+ *
+ * @brief Build Ric subscription action failed to be added list
+ *
+ * @details
+ *
+ *    Function : BuildActionFailedToBeAddedList
+ *
+ *    Functionality: Build Ric subs action failed to be added list
+ *
+ * @params[in]
+ *    RICactions_FailedToBeAddedForModification_List_t to be filled
+ *    Num Of Action failed to be added
+ *    Action failed to be added list
+ *
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+
+uint8_t BuildActionFailedToBeAddedList(RICactions_FailedToBeAddedForModification_List_t *failedToBeAddedActionList, uint8_t numOfActionFailedToBeAdded, RejectedAction *actionFailedToBeAdded)
+{
+   uint8_t arrIdx=0;
+   RICaction_FailedToBeAddedForModification_ItemIEs_t *failedToBeAddedActionItemIe =NULLP;
+
+   failedToBeAddedActionList->list.count = numOfActionFailedToBeAdded;
+   failedToBeAddedActionList->list.size = failedToBeAddedActionList->list.count *  sizeof(RICaction_FailedToBeAddedForModification_ItemIEs_t*);
+   DU_ALLOC(failedToBeAddedActionList->list.array, failedToBeAddedActionList->list.size);
+   if(!failedToBeAddedActionList->list.array)
+   {
+      DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+      return RFAILED;
+   }
+
+   for(arrIdx = 0; arrIdx< failedToBeAddedActionList->list.count; arrIdx++)
+   {
+      DU_ALLOC(failedToBeAddedActionList->list.array[arrIdx], sizeof(RICaction_FailedToBeAddedForModification_ItemIEs_t));
+      if(!failedToBeAddedActionList->list.array[arrIdx])
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+         return RFAILED;
+      }
+      failedToBeAddedActionItemIe = (RICaction_FailedToBeAddedForModification_ItemIEs_t*)failedToBeAddedActionList->list.array[arrIdx];
+      failedToBeAddedActionItemIe->id = ProtocolIE_IDE2_id_RICaction_FailedToBeAddedForModification_Item;
+      failedToBeAddedActionItemIe->criticality = CriticalityE2_ignore;
+      failedToBeAddedActionItemIe->value.present = RICaction_FailedToBeAddedForModification_ItemIEs__value_PR_RICaction_FailedToBeAddedForModification_Item;
+      failedToBeAddedActionItemIe->value.choice.RICaction_FailedToBeAddedForModification_Item.ricActionID = actionFailedToBeAdded[arrIdx].id;
+      fillE2Cause(&failedToBeAddedActionItemIe->value.choice.RICaction_FailedToBeAddedForModification_Item.cause, actionFailedToBeAdded[arrIdx].failureCause);
+   }
+   return ROK;
+}
+
+/*******************************************************************
+ *
+ * @brief Builds and Send RIC Subscription Modification Response
+ *
+ * @details
+ *
+ *    Function : BuildAndSendRicSubscriptionModificationResponse
+ *
+ * Functionality: Build and send RIC Subscription Modification Response.
+ *
+ * @params[in]
+ *          PendingSubsModRspInfo
+ * @return ROK     - success
+ *         RFAILED - failure
+ *
+ ******************************************************************/
+uint8_t BuildAndSendRicSubscriptionModificationResponse(PendingSubsModRspInfo *pendingSubsModRsp)
+{
+   uint8_t elementCnt = 0, ieIdx = 0, ret = RFAILED;
+   E2AP_PDU_t         *e2apMsg = NULLP;
+   RICsubscriptionModificationResponse_t *ricSubsModResponse = NULLP;
+   RICsubscriptionModificationResponse_IEs_t *ricSubsModResponseIe = NULLP;
+   asn_enc_rval_t     encRetVal;        /* Encoder return value */
+
+   while(true)
+   {
+      DU_LOG("\nINFO   -->  E2AP : Building RIC Subscription Modification Response Message\n");
+
+      DU_ALLOC(e2apMsg, sizeof(E2AP_PDU_t));
+      if(e2apMsg == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         break;
+      }
+
+      e2apMsg->present = E2AP_PDU_PR_successfulOutcome;
+      DU_ALLOC(e2apMsg->choice.successfulOutcome, sizeof(SuccessfulOutcomeE2_t));
+      if(e2apMsg->choice.successfulOutcome == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : %s: Memory allocation for E2AP-PDU failed at line %d",__func__, __LINE__);
+         break;
+      }
+      e2apMsg->choice.successfulOutcome->procedureCode = ProcedureCodeE2_id_RICsubscriptionModification;
+      e2apMsg->choice.successfulOutcome->criticality = CriticalityE2_reject;
+      e2apMsg->choice.successfulOutcome->value.present = SuccessfulOutcomeE2__value_PR_RICsubscriptionModificationResponse;
+
+
+      ricSubsModResponse = &e2apMsg->choice.successfulOutcome->value.choice.RICsubscriptionModificationResponse;
+
+      elementCnt = 2;
+      if(pendingSubsModRsp->removeActionStatus.numOfAcceptedActions)
+         elementCnt++;
+      if(pendingSubsModRsp->addActionStatus.numOfAcceptedActions)
+         elementCnt++;
+      if(pendingSubsModRsp->modActionStatus.numOfAcceptedActions)
+         elementCnt++;
+      if(pendingSubsModRsp->removeActionStatus.numOfRejectedActions)
+         elementCnt++;
+      if(pendingSubsModRsp->addActionStatus.numOfRejectedActions)
+         elementCnt++;
+      if(pendingSubsModRsp->modActionStatus.numOfRejectedActions)
+         elementCnt++;
+
+      ricSubsModResponse->protocolIEs.list.count = elementCnt;
+      ricSubsModResponse->protocolIEs.list.size = elementCnt * sizeof(RICsubscriptionModificationResponse_IEs_t *);
+
+      DU_ALLOC(ricSubsModResponse->protocolIEs.list.array, ricSubsModResponse->protocolIEs.list.size);
+      if(ricSubsModResponse->protocolIEs.list.array == NULLP)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+         break;
+      }
+
+      for(ieIdx = 0; ieIdx < elementCnt; ieIdx++)
+      {
+         DU_ALLOC(ricSubsModResponse->protocolIEs.list.array[ieIdx], sizeof(RICsubscriptionModificationResponse_IEs_t));
+         if(ricSubsModResponse->protocolIEs.list.array[ieIdx] == NULLP)
+         {
+            DU_LOG("\nERROR  -->  E2AP : Memory allocation failed at [%s] : line [%d]", __func__, __LINE__);
+            break;
+         }
+      }
+      if(ieIdx < elementCnt)
+         break;
+
+      ieIdx = 0;
+      ricSubsModResponseIe = ricSubsModResponse->protocolIEs.list.array[ieIdx];
+      ricSubsModResponseIe->id = ProtocolIE_IDE2_id_RICrequestID;
+      ricSubsModResponseIe->criticality = CriticalityE2_reject;
+      ricSubsModResponseIe->value.present = RICsubscriptionModificationResponse_IEs__value_PR_RICrequestID;
+      ricSubsModResponseIe->value.choice.RICrequestID.ricRequestorID= pendingSubsModRsp->requestId.requestorId;
+      ricSubsModResponseIe->value.choice.RICrequestID.ricInstanceID = pendingSubsModRsp->requestId.instanceId;
+
+      ieIdx++;
+      ricSubsModResponseIe = ricSubsModResponse->protocolIEs.list.array[ieIdx];
+      ricSubsModResponseIe->id = ProtocolIE_IDE2_id_RANfunctionID;
+      ricSubsModResponseIe->criticality = CriticalityE2_reject;
+      ricSubsModResponseIe->value.present = RICsubscriptionModificationResponse_IEs__value_PR_RANfunctionID;
+      ricSubsModResponseIe->value.choice.RANfunctionID = pendingSubsModRsp->ranFuncId;
+
+      if(pendingSubsModRsp->removeActionStatus.numOfAcceptedActions)
+      {
+         ieIdx++;
+         ricSubsModResponseIe = ricSubsModResponse->protocolIEs.list.array[ieIdx];
+         ricSubsModResponseIe->id = ProtocolIE_IDE2_id_RICactionsRemovedForModification_List;
+         ricSubsModResponseIe->criticality = CriticalityE2_ignore;
+         ricSubsModResponseIe->value.present = RICsubscriptionModificationResponse_IEs__value_PR_RICactions_RemovedForModification_List;
+         if(BuildActionRemovedList(&ricSubsModResponseIe->value.choice.RICactions_RemovedForModification_List,\
+         pendingSubsModRsp->removeActionStatus.numOfAcceptedActions, pendingSubsModRsp->removeActionStatus.acceptedActionList) != ROK)
+         {
+            DU_LOG("\nERROR  -->  E2AP : failed at [%s] : line [%d]", __func__, __LINE__);
+            break;
+         }
+      }
+
+      if(pendingSubsModRsp->removeActionStatus.numOfRejectedActions)
+      {
+         ieIdx++;
+         ricSubsModResponseIe = ricSubsModResponse->protocolIEs.list.array[ieIdx];
+         ricSubsModResponseIe->id = ProtocolIE_IDE2_id_RICactionsFailedToBeRemovedForModification_List;
+         ricSubsModResponseIe->criticality = CriticalityE2_ignore;
+         ricSubsModResponseIe->value.present = RICsubscriptionModificationResponse_IEs__value_PR_RICactions_FailedToBeRemovedForModification_List;
+         if(BuildActionFailedToBeRemovedList(&ricSubsModResponseIe->value.choice.RICactions_FailedToBeRemovedForModification_List,\
+         pendingSubsModRsp->removeActionStatus.numOfRejectedActions, pendingSubsModRsp->removeActionStatus.rejectedActionList) != ROK)
+         {
+            DU_LOG("\nERROR  -->  E2AP : failed at [%s] : line [%d]", __func__, __LINE__);
+            break;
+         }
+      }
+ 
+      if(pendingSubsModRsp->modActionStatus.numOfAcceptedActions)
+      {
+         ieIdx++;
+         ricSubsModResponseIe = ricSubsModResponse->protocolIEs.list.array[ieIdx];
+         ricSubsModResponseIe->id = ProtocolIE_IDE2_id_RICactionsModifiedForModification_List;
+         ricSubsModResponseIe->criticality = CriticalityE2_ignore;
+         ricSubsModResponseIe->value.present = RICsubscriptionModificationResponse_IEs__value_PR_RICactions_ModifiedForModification_List;
+         if(BuildActionModifiedList(&ricSubsModResponseIe->value.choice.RICactions_ModifiedForModification_List,\
+         pendingSubsModRsp->modActionStatus.numOfAcceptedActions, pendingSubsModRsp->modActionStatus.acceptedActionList) != ROK)
+         {
+            DU_LOG("\nERROR  -->  E2AP : failed at [%s] : line [%d]", __func__, __LINE__);
+            break;
+         }
+      }
+
+      if(pendingSubsModRsp->modActionStatus.numOfRejectedActions)
+      {
+         ieIdx++;
+         ricSubsModResponseIe = ricSubsModResponse->protocolIEs.list.array[ieIdx];
+         ricSubsModResponseIe->id = ProtocolIE_IDE2_id_RICactionsFailedToBeModifiedForModification_List;
+         ricSubsModResponseIe->criticality = CriticalityE2_ignore;
+         ricSubsModResponseIe->value.present = RICsubscriptionModificationResponse_IEs__value_PR_RICactions_FailedToBeModifiedForModification_List;
+         if(BuildActionFailedToBeModifiedList(&ricSubsModResponseIe->value.choice.RICactions_FailedToBeModifiedForModification_List,\
+         pendingSubsModRsp->modActionStatus.numOfRejectedActions, pendingSubsModRsp->modActionStatus.rejectedActionList) != ROK)
+         {
+            DU_LOG("\nERROR  -->  E2AP : failed at [%s] : line [%d]", __func__, __LINE__);
+            break;
+         }
+      }
+
+      if(pendingSubsModRsp->addActionStatus.numOfAcceptedActions)
+      {
+         ieIdx++;
+         ricSubsModResponseIe = ricSubsModResponse->protocolIEs.list.array[ieIdx];
+         ricSubsModResponseIe->id = ProtocolIE_IDE2_id_RICactionsAddedForModification_List;
+         ricSubsModResponseIe->criticality = CriticalityE2_ignore;
+         ricSubsModResponseIe->value.present = RICsubscriptionModificationResponse_IEs__value_PR_RICactions_AddedForModification_List;
+         if(BuildActionAddedList(&ricSubsModResponseIe->value.choice.RICactions_AddedForModification_List,\
+         pendingSubsModRsp->addActionStatus.numOfAcceptedActions, pendingSubsModRsp->addActionStatus.acceptedActionList) != ROK)
+         {
+            DU_LOG("\nERROR  -->  E2AP : failed at [%s] : line [%d]", __func__, __LINE__);
+            break;
+         }
+      }
+
+      if(pendingSubsModRsp->addActionStatus.numOfRejectedActions)
+      {
+         ieIdx++;
+         ricSubsModResponseIe = ricSubsModResponse->protocolIEs.list.array[ieIdx];
+         ricSubsModResponseIe->id = ProtocolIE_IDE2_id_RICactionsFailedToBeAddedForModification_List;
+         ricSubsModResponseIe->criticality = CriticalityE2_ignore;
+         ricSubsModResponseIe->value.present = RICsubscriptionModificationResponse_IEs__value_PR_RICactions_FailedToBeAddedForModification_List;
+         if(BuildActionFailedToBeAddedList(&ricSubsModResponseIe->value.choice.RICactions_FailedToBeAddedForModification_List,\
+         pendingSubsModRsp->addActionStatus.numOfRejectedActions, pendingSubsModRsp->addActionStatus.rejectedActionList) != ROK)
+         {
+            DU_LOG("\nERROR  -->  E2AP : failed at [%s] : line [%d]", __func__, __LINE__);
+            break;
+         }
+      }
+
+      /* Prints the Msg formed */
+      xer_fprint(stdout, &asn_DEF_E2AP_PDU, e2apMsg);
+      memset(encBuf, 0, ENC_BUF_MAX_LEN);
+      encBufSize = 0;
+      encRetVal = aper_encode(&asn_DEF_E2AP_PDU, 0, e2apMsg, PrepFinalEncBuf, encBuf);
+      if(encRetVal.encoded == ENCODE_FAIL)
+      {
+         DU_LOG("\nERROR  -->  E2AP : Could not encode RIC Subscription Modification Response Message (at %s)\n",\
+               encRetVal.failed_type ? encRetVal.failed_type->name : "unknown");
+         break;
+      }
+      else
+      {
+         DU_LOG("\nDEBUG  -->  E2AP : Created APER encoded buffer for RIC Subscription Modification Response Message \n");
+#ifdef DEBUG_ASN_PRINT
+         for(int i=0; i< encBufSize; i++)
+         {
+            printf("%x",encBuf[i]);
+         }
+#endif
+      }
+
+      if(SendE2APMsg(DU_APP_MEM_REGION, DU_POOL, encBuf, encBufSize) != ROK)
+      {
+         DU_LOG("\nERROR   -->  E2AP : Failed to send RIC Susbcription Modification Response Message");
+         break;
+      }
+
+      ret = ROK;
+      break;
+   }
+
+   FreeRicSubscriptionModificationResponse(e2apMsg);
+   return ret;
+}
+
+/*******************************************************************
+ *
  * @brief Handles received E2AP message and sends back response  
  *
  * @details
@@ -6049,6 +11097,16 @@ void E2APMsgHdlr(Buffer *mBuf)
                      procRicServiceUpdateFailure(e2apMsg);
                      break;
                   }
+               case UnsuccessfulOutcomeE2__value_PR_RICsubscriptionModificationRefuse:
+                  {
+                     procRicSubscriptionModificationRefuse(e2apMsg);
+                     break;
+                  }
+               case UnsuccessfulOutcomeE2__value_PR_E2RemovalFailure:
+                  {
+                     ProcE2RemovalFailure(e2apMsg);
+                     break;
+                  }
                default:
                   {
                      DU_LOG("\nERROR  -->  E2AP : Invalid type of E2AP_PDU_PR_unsuccessfulOutcome  [%d]",\
@@ -6056,6 +11114,7 @@ void E2APMsgHdlr(Buffer *mBuf)
                      return;
                   }
             }
+            free(e2apMsg->choice.unsuccessfulOutcome);
             break;
          }
       case E2AP_PDU_PR_successfulOutcome:
@@ -6070,11 +11129,6 @@ void E2APMsgHdlr(Buffer *mBuf)
                      }
                      break;
                   }
-               case SuccessfulOutcomeE2__value_PR_E2nodeConfigurationUpdateAcknowledge:
-                  {
-                     DU_LOG("\nDEBUG   -->  E2AP : E2 node Config update ack message recevied");
-                     break;
-                  }
                case SuccessfulOutcomeE2__value_PR_ResetResponseE2:
                   {
                      procResetResponse(e2apMsg);
@@ -6085,8 +11139,21 @@ void E2APMsgHdlr(Buffer *mBuf)
                      procRicServiceUpdateAck(e2apMsg);
                      break;
                   }
-
-
+               case SuccessfulOutcomeE2__value_PR_RICsubscriptionModificationConfirm:
+                  {
+                     procRicSubscriptionModificationConfirm(e2apMsg);
+                     break;
+                  }
+               case SuccessfulOutcomeE2__value_PR_E2nodeConfigurationUpdateAcknowledge:
+                  {
+                     procE2NodeConfigUpdateAck(e2apMsg);
+                     break;
+                  }
+               case SuccessfulOutcomeE2__value_PR_E2RemovalResponse:
+                  {
+                     ProcE2RemovalResponse(e2apMsg);
+                     break;
+                  }
                default:
                   {
                      DU_LOG("\nERROR  -->  E2AP : Invalid type of E2AP_PDU_PR_successfulOutcome  [%d]",\
@@ -6115,6 +11182,36 @@ void E2APMsgHdlr(Buffer *mBuf)
                case InitiatingMessageE2__value_PR_ErrorIndicationE2:
                   {
                      DU_LOG("\nINFO  -->  E2AP : Error indication received");
+                     break;
+                  }
+               case InitiatingMessageE2__value_PR_ResetRequestE2:
+                  {
+                     DU_LOG("\nINFO  -->  E2AP : Reset request received");
+                     procE2ResetRequest(e2apMsg);
+                     break;
+                  }
+               case InitiatingMessageE2__value_PR_RICsubscriptionDeleteRequest:
+                  {
+                     DU_LOG("\nINFO  -->  E2AP : RIC Subscription Delete Request received");
+                     procRicSubscriptionDeleteRequest(e2apMsg);
+                     break;
+                  }
+               case InitiatingMessageE2__value_PR_E2RemovalRequest:
+                  {
+                     DU_LOG("\nINFO  -->  E2AP : E2 Removal request received");
+                     procE2RemovalRequest(e2apMsg);
+                     break;
+                  }
+               case InitiatingMessageE2__value_PR_E2connectionUpdate:
+                  {
+                     DU_LOG("\nINFO  -->  E2AP : E2 coneection update received");
+                     procE2ConnectionUpdate(e2apMsg);
+                     break;
+                  }
+               case InitiatingMessageE2__value_PR_RICsubscriptionModificationRequest:
+                  {
+                     DU_LOG("\nINFO  -->  E2AP : RIC Subscription Modification Request received");
+                     procRicSubscriptionModificationRequest(e2apMsg);
                      break;
                   }
                default:

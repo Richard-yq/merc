@@ -139,9 +139,9 @@ uint8_t schBroadcastSib1Alloc(SchCellCb *cell, SlotTimingInfo slotTime, DlBrdcst
    }
    
    dlBrdcstAlloc->crnti = SI_RNTI;
-   dmrs = cell->sib1SchCfg.sib1PdcchCfg.dci.pdschCfg.dmrs;
-   freqAlloc = cell->sib1SchCfg.sib1PdcchCfg.dci.pdschCfg.pdschFreqAlloc;
-   timeAlloc = cell->sib1SchCfg.sib1PdcchCfg.dci.pdschCfg.pdschTimeAlloc;
+   dmrs = cell->sib1SchCfg.sib1PdcchCfg.dci[0].pdschCfg.dmrs;
+   freqAlloc = cell->sib1SchCfg.sib1PdcchCfg.dci[0].pdschCfg.pdschFreqAlloc;
+   timeAlloc = cell->sib1SchCfg.sib1PdcchCfg.dci[0].pdschCfg.pdschTimeAlloc;
    schDlSlotInfo = cell->schDlSlotInfo[slotTime.slot];
 
    /* Find total symbols used including DMRS */
@@ -658,19 +658,19 @@ uint8_t schDlRsrcAllocMsg4(SchCellCb *cell, SlotTimingInfo msg4Time, uint8_t ueI
    pdcch->coresetCfg.shiftIndex = cell->cellCfg.phyCellId;
    pdcch->coresetCfg.precoderGranularity = 0; /* sameAsRegBundle */
    pdcch->numDlDci = 1;
-   pdcch->dci.rnti = cell->raCb[ueId-1].tcrnti;
-   pdcch->dci.scramblingId = cell->cellCfg.phyCellId;
-   pdcch->dci.scramblingRnti = 0;
-   pdcch->dci.cceIndex = 4; /* considering SIB1 is sent at cce 0-1-2-3 */
-   pdcch->dci.aggregLevel = 4;
-   pdcch->dci.beamPdcchInfo.numPrgs = 1;
-   pdcch->dci.beamPdcchInfo.prgSize = 1;
-   pdcch->dci.beamPdcchInfo.digBfInterfaces = 0;
-   pdcch->dci.beamPdcchInfo.prg[0].pmIdx = 0;
-   pdcch->dci.beamPdcchInfo.prg[0].beamIdx[0] = 0;
-   pdcch->dci.txPdcchPower.beta_pdcch_1_0 = 0;
-   pdcch->dci.txPdcchPower.powerControlOffsetSS = 0;
-   pdsch = &pdcch->dci.pdschCfg; 
+   pdcch->dci[0].rnti = cell->raCb[ueId-1].tcrnti;
+   pdcch->dci[0].scramblingId = cell->cellCfg.phyCellId;
+   pdcch->dci[0].scramblingRnti = 0;
+   pdcch->dci[0].cceIndex = 4; /* considering SIB1 is sent at cce 0-1-2-3 */
+   pdcch->dci[0].aggregLevel = 4;
+   pdcch->dci[0].beamPdcchInfo.numPrgs = 1;
+   pdcch->dci[0].beamPdcchInfo.prgSize = 1;
+   pdcch->dci[0].beamPdcchInfo.digBfInterfaces = 0;
+   pdcch->dci[0].beamPdcchInfo.prg[0].pmIdx = 0;
+   pdcch->dci[0].beamPdcchInfo.prg[0].beamIdx[0] = 0;
+   pdcch->dci[0].txPdcchPower.beta_pdcch_1_0 = 0;
+   pdcch->dci[0].txPdcchPower.powerControlOffsetSS = 0;
+   pdsch = &pdcch->dci[0].pdschCfg; 
    
    /* fill the PDSCH PDU */
    uint8_t cwCount = 0;
@@ -816,15 +816,16 @@ uint16_t schAllocPucchResource(SchCellCb *cell, SlotTimingInfo pucchTime, uint16
  * ****************************************************************/
 uint8_t schDlRsrcAllocDlMsg(SchCellCb *cell, SlotTimingInfo slotTime, uint16_t crnti,
                 uint32_t tbSize, DlMsgSchInfo *dlMsgAlloc, uint16_t startPRB, uint8_t pdschStartSymbol,
-                uint8_t pdschNumSymbols, bool isRetx, SchDlHqProcCb *hqP)
+                uint8_t pdschNumSymbols, bool isRetx, SchDlHqProcCb *hqP, SchPdcchAllocInfo pdcchAllocInfo)
 {
-   uint8_t ueId=0;
-   uint8_t cwCount = 0;
+   uint8_t ueId=0, ssIdx = 0, cRSetIdx = 0;;
+   uint8_t cwCount = 0, rbgCount = 0, pdcchStartSymbol = 0;
    PdcchCfg *pdcch = NULLP;
    PdschCfg *pdsch = NULLP;
    BwpCfg *bwp = NULLP;
    SchUeCb ueCb;
    SchControlRsrcSet coreset1;
+   SchSearchSpace searchSpace;
    SchPdschConfig pdschCfg;
    uint8_t dmrsStartSymbol, startSymbol, numSymbol;
 
@@ -839,7 +840,25 @@ uint8_t schDlRsrcAllocDlMsg(SchCellCb *cell, SlotTimingInfo slotTime, uint16_t c
 
    GET_UE_ID(crnti, ueId);
    ueCb  = cell->ueCb[ueId-1];
-   coreset1 = ueCb.ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdcchCfg.cRSetToAddModList[0];
+
+   for(cRSetIdx = 0; cRSetIdx < ueCb.ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdcchCfg.numCRsetToAddMod; cRSetIdx++)
+   {
+      if(ueCb.ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdcchCfg.cRSetToAddModList[cRSetIdx].cRSetId\
+            == pdcchAllocInfo.cRSetId)
+      {
+         coreset1 = ueCb.ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdcchCfg.cRSetToAddModList[cRSetIdx];
+         break;
+      }
+   }
+   for(ssIdx = 0; ssIdx < ueCb.ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdcchCfg.numSearchSpcToAddMod; ssIdx++)
+   {
+      if(ueCb.ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdcchCfg.searchSpcToAddModList[ssIdx].searchSpaceId\
+            ==  pdcchAllocInfo.ssId)
+      {
+         searchSpace = ueCb.ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdcchCfg.searchSpcToAddModList[ssIdx];
+         break;
+      }
+   }
    pdschCfg = ueCb.ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdschCfg;
 
    /* fill BWP */
@@ -849,33 +868,61 @@ uint8_t schDlRsrcAllocDlMsg(SchCellCb *cell, SlotTimingInfo slotTime, uint16_t c
    bwp->cyclicPrefix = cell->sib1SchCfg.bwp.cyclicPrefix;
 
    /* fill the PDCCH PDU */
-   //Considering coreset1 also starts from same symbol as coreset0
-   pdcch->coresetCfg.startSymbolIndex = coresetIdxTable[0][3];
+   /*StartSymbol of PDCCH*/
+   pdcchStartSymbol = findSsStartSymbol(searchSpace.mSymbolsWithinSlot);
+   if(pdcchStartSymbol < MAX_SYMB_PER_SLOT)
+      pdcch->coresetCfg.startSymbolIndex = pdcchStartSymbol;
+   else
+   {
+      DU_LOG("\nERROR  -->  SCH : Invalid SymbolIndex in schDlRsrcAllocDlMsg");
+      return RFAILED;
+   }
    pdcch->coresetCfg.durationSymbols = coreset1.duration;
    memcpy(pdcch->coresetCfg.freqDomainResource, coreset1.freqDomainRsrc, FREQ_DOM_RSRC_SIZE);
    pdcch->coresetCfg.cceRegMappingType = coreset1.cceRegMappingType; /* non-interleaved */
    pdcch->coresetCfg.regBundleSize = 6;   /* must be 6 for non-interleaved */
    pdcch->coresetCfg.interleaverSize = 0; /* NA for non-interleaved */
    pdcch->coresetCfg.coreSetType = 1; /* non PBCH coreset */
-   //Considering number of RBs in coreset1 is same as coreset0
-   pdcch->coresetCfg.coreSetSize = coresetIdxTable[0][1];
+
+   /*Size of coreset: Number of PRBs in a coreset*/
+   rbgCount = countRBGFrmCoresetFreqRsrc(coreset1.freqDomainRsrc);
+   if(rbgCount)
+   {
+      pdcch->coresetCfg.coreSetSize = ((rbgCount) * NUM_PRBS_PER_RBG);
+   }
+   else
+   {
+      DU_LOG("\nERROR  -->  SCH : CORESETSize is zero in schDlRsrcAllocDlMsg");
+      return RFAILED;
+   }
+
    pdcch->coresetCfg.shiftIndex = cell->cellCfg.phyCellId;
    pdcch->coresetCfg.precoderGranularity =  coreset1.precoderGranularity;
-   pdcch->numDlDci = 1;
-   pdcch->dci.rnti = ueCb.crnti;
-   pdcch->dci.scramblingId = cell->cellCfg.phyCellId;
-   pdcch->dci.scramblingRnti = 0;
-   pdcch->dci.cceIndex = 0; /* 0-3 for UL and 4-7 for DL */
-   pdcch->dci.aggregLevel = 4;
-   pdcch->dci.beamPdcchInfo.numPrgs = 1;
-   pdcch->dci.beamPdcchInfo.prgSize = 1;
-   pdcch->dci.beamPdcchInfo.digBfInterfaces = 0;
-   pdcch->dci.beamPdcchInfo.prg[0].pmIdx = 0;
-   pdcch->dci.beamPdcchInfo.prg[0].beamIdx[0] = 0;
-   pdcch->dci.txPdcchPower.beta_pdcch_1_0 = 0;
-   pdcch->dci.txPdcchPower.powerControlOffsetSS = 0;
+   if(pdcch->numDlDci >= MAX_NUM_PDCCH)
+   {
+      DU_LOG("\nERROR  -->  SCH: MAX number of PDCCH allocted for this slot.");
+      return RFAILED;
+   }
+   pdcch->dci[pdcch->numDlDci].rnti = ueCb.crnti;
+   pdcch->dci[pdcch->numDlDci].scramblingId = cell->cellCfg.phyCellId;
+   pdcch->dci[pdcch->numDlDci].scramblingRnti = 0;
 
-   pdsch = &pdcch->dci.pdschCfg;
+   /*TODO below assumptions of CCE Index is wrong:
+    * Range 0 to 135 as per ORAN.WG8.AAD Table 9-35 CORESET configuration and
+    * it has to be calculated using the formula given in 3GPP TS 38.213, Sec 10.1 */
+   pdcch->dci[pdcch->numDlDci].cceIndex = pdcchAllocInfo.cceIndex; 
+   pdcch->dci[pdcch->numDlDci].aggregLevel = pdcchAllocInfo.aggLvl;
+   pdcch->dci[pdcch->numDlDci].beamPdcchInfo.numPrgs = 1;
+   pdcch->dci[pdcch->numDlDci].beamPdcchInfo.prgSize = 1;
+   pdcch->dci[pdcch->numDlDci].beamPdcchInfo.digBfInterfaces = 0;
+   pdcch->dci[pdcch->numDlDci].beamPdcchInfo.prg[0].pmIdx = 0;
+   pdcch->dci[pdcch->numDlDci].beamPdcchInfo.prg[0].beamIdx[0] = 0;
+   pdcch->dci[pdcch->numDlDci].txPdcchPower.beta_pdcch_1_0 = 0;
+   pdcch->dci[pdcch->numDlDci].txPdcchPower.powerControlOffsetSS = 0;
+
+   pdsch = &pdcch->dci[pdcch->numDlDci].pdschCfg;
+   pdcch->numDlDci++;
+
    pdsch->pduBitmap = 0; /* PTRS and CBG params are excluded */
    pdsch->rnti = ueCb.crnti;
    pdsch->pduIndex = 0;
@@ -935,7 +982,7 @@ uint8_t schDlRsrcAllocDlMsg(SchCellCb *cell, SlotTimingInfo slotTime, uint16_t c
 
    /* Allocate the number of PRBs required for DL PDSCH */
    if((allocatePrbDl(cell, slotTime, startSymbol, numSymbol,\
-      &pdsch->pdschFreqAlloc.startPrb, pdsch->pdschFreqAlloc.numPrb)) != ROK)
+               &pdsch->pdschFreqAlloc.startPrb, pdsch->pdschFreqAlloc.numPrb)) != ROK)
    {
       DU_LOG("\nERROR  --> SCH : allocatePrbDl() failed for DL MSG");
       SCH_FREE(dlMsgAlloc->dlMsgPdcchCfg, sizeof(PdcchCfg));
@@ -1773,7 +1820,7 @@ uint8_t schProcessMsg4Req(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId
    }
 
    if(findValidK0K1Value(cell, currTime, ueId, false, &pdschStartSymbol, &pdschNumSymbols, &pdcchTime, &pdschTime,\
-            &pucchTime, isRetxMsg4, *msg4HqProc) != true )
+            &pucchTime, isRetxMsg4, *msg4HqProc, NULLP) != true )
    {
       DU_LOG("\nERROR  -->  SCH: schProcessMsg4Req() : k0 k1 not found");
       return RFAILED;
@@ -1819,7 +1866,7 @@ uint8_t schProcessMsg4Req(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId
          cell->schDlSlotInfo[pdcchTime.slot]->dlMsgAlloc[ueId-1] = NULLP;
          return RFAILED;
       }
-      memcpy(dciSlotAlloc->dlMsgPdschCfg, &dciSlotAlloc->dlMsgPdcchCfg->dci.pdschCfg, sizeof(PdschCfg));
+      memcpy(dciSlotAlloc->dlMsgPdschCfg, &dciSlotAlloc->dlMsgPdcchCfg->dci[0].pdschCfg, sizeof(PdschCfg));
    }
    else
    {
@@ -1850,7 +1897,7 @@ uint8_t schProcessMsg4Req(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId
       SCH_ALLOC(msg4SlotAlloc->dlMsgPdschCfg, sizeof(PdschCfg));
       if(msg4SlotAlloc->dlMsgPdschCfg)
       {
-         memcpy(msg4SlotAlloc->dlMsgPdschCfg, &dciSlotAlloc->dlMsgPdcchCfg->dci.pdschCfg, sizeof(PdschCfg));
+         memcpy(msg4SlotAlloc->dlMsgPdschCfg, &dciSlotAlloc->dlMsgPdcchCfg->dci[0].pdschCfg, sizeof(PdschCfg));
       }
       else
       {
@@ -1872,7 +1919,6 @@ uint8_t schProcessMsg4Req(SchCellCb *cell, SlotTimingInfo currTime, uint8_t ueId
    schAllocPucchResource(cell, pucchTime, cell->raCb[ueId-1].tcrnti, &cell->ueCb[ueId-1], isRetxMsg4, *msg4HqProc);
 
    cell->schDlSlotInfo[pdcchTime.slot]->pdcchUe = ueId;
-   cell->schDlSlotInfo[pdschTime.slot]->pdschUe = ueId;
    cell->schUlSlotInfo[pucchTime.slot]->pucchUe = ueId;
    cell->raCb[ueId-1].msg4recvd = FALSE;
    if(isRetxMsg4)
@@ -2299,6 +2345,277 @@ bool schGetMsg3K2(SchCellCb *cell, SchUlHqProcCb* msg3HqProc, uint16_t dlTime, S
    return k2Found;
 }
 
+/*
+ *  * @brief : This Function fills the Coreset and SS info based on PDCCH Cfg received for a UE
+ *
+ *     Function : fillUeCoresetAndSsInfo
+ *
+ * For a Coreset, capture the following details which will be used during pdcch allocation
+ *   [Step 1]: Count number of RBG and calculate TotalPRBs which can be used 
+ *   [Step 2]: Get the reference pointer for Coreset and Its SearchSpace.
+ *   [Step 3]: A CCE will have 6 RBs in TOTAL. If duration increases, CCE will
+ *             occupy less number of PRBs(1RB x 1 OFDM Symbol). Eg. If duration = 2, then
+ *             instead of 6 PRBs, CCE will only occupy 3 PRBs and 2 OFDM symbols.
+ *   [Step 4]: Based on CoresetSize, fill AggLvl-CQI mapping by calculating the dciSize.
+ *   [Step 5]: Calculate Y value for this coreset and UE
+ *
+ *   @Params[in]: UeCb,
+ *  [return]: ROK, RFAILED : Memory allocation failure.
+ **/
+uint8_t fillUeCoresetAndSsInfo(SchUeCb *ue)
+{
+   uint8_t  cRSetIdx = 0,ssIdx = 0; 
+   uint16_t rbgCount = 0;
+   SchPdcchConfig *pdcchCfg = NULLP;
+
+   pdcchCfg =  &ue->ueCfg.spCellCfg.servCellRecfg.initDlBwp.pdcchCfg;
+   if(pdcchCfg == NULLP)
+   {
+     DU_LOG("\nERROR  --> SCH: PDCCH Cfg is not received thus skip filling of Coreset & SS info");
+     return RFAILED;
+   }
+   for(cRSetIdx = 0; cRSetIdx < pdcchCfg->numCRsetToAddMod; cRSetIdx++ )
+   {
+      /*[Step 1]: *//*Size of coreset: Number of PRBs in a coreset*/
+      rbgCount = countRBGFrmCoresetFreqRsrc(pdcchCfg->cRSetToAddModList[cRSetIdx].freqDomainRsrc);
+      if(rbgCount)
+      {
+         ue->pdcchInfo[cRSetIdx].totalPrbs = ((rbgCount) * NUM_PRBS_PER_RBG);
+      }
+      else
+      {
+         DU_LOG("\nERROR  -->  SCH : CORESETSize is zero in fillCoresetAndSsConfg");
+         continue;
+      }
+      /*[Step 2]:*/
+      ue->pdcchInfo[cRSetIdx].cRSetRef = &pdcchCfg->cRSetToAddModList[cRSetIdx];
+      for(ssIdx = 0; ssIdx < pdcchCfg->numSearchSpcToAddMod; ssIdx++)
+      {
+         if(pdcchCfg->searchSpcToAddModList[ssIdx].cRSetId == pdcchCfg->cRSetToAddModList[cRSetIdx].cRSetId)
+         {
+            ue->pdcchInfo[cRSetIdx].ssRef = &pdcchCfg->searchSpcToAddModList[ssIdx];
+            break;
+         }
+      }
+
+      /*[Step 3]:*/
+      /*nrOfPRBPerCce is Number of PRBs occupied by a CCE based on Duration*/
+      ue->pdcchInfo[cRSetIdx].nrOfPRBPerCce = NUM_PRBS_PER_RBG/pdcchCfg->cRSetToAddModList[cRSetIdx].duration;
+      ue->pdcchInfo[cRSetIdx].totalCceCount = rbgCount * pdcchCfg->cRSetToAddModList[cRSetIdx].duration;
+
+      /*[Step 4]:*/
+      fillCqiAggLvlMapping(&ue->pdcchInfo[cRSetIdx]);
+
+      /*[Step 5]:*/
+      if(RFAILED == schUpdValY(ue, &ue->pdcchInfo[cRSetIdx]))
+      {
+         return RFAILED;
+      }
+   }
+   return ROK;
+}
+
+/*
+ *  @brief: Function will validate a slot for PDCCH allocation
+ *
+ *  Function: schPdcchSlotValidation
+ *
+ *  As per 3gpp Spec 38.331, SearchSpace parameter, Every SearchSpace will have
+ *  details of which slot and after how many slot the UE will monitor for PDCCH.
+ *  Thus, while PDCCH allocation we need to ensure the above validation passes.
+ *
+ *  @param [IN]: PDCCH time, SearchSpace Info, numSlots in Cell
+ *         [RETURN]: Flag depicting the slot validation
+ * */
+bool schPdcchSlotValidation(SlotTimingInfo pdcchTime, SchSearchSpace *searchSpace, uint16_t numSlots)
+{
+    bool     isSlotValid = false;
+    uint16_t slotNum = 0, mSlotPeriodicityVal = 0;
+
+    /*Converting the timing info in units of Slots*/
+    slotNum = (pdcchTime.sfn * numSlots)+pdcchTime.slot;
+
+    mSlotPeriodicityVal = \
+    schConvertSlotPeriodicityEnumToValue(searchSpace->mSlotPeriodicityAndOffset.mSlotPeriodicity);
+
+    if(!mSlotPeriodicityVal)
+    {
+       DU_LOG("\nERROR   --> SCH: Slot Periodicity is ZERO thus cant proceed with this SearchSpace");
+       return false;
+    }
+    /*The Monitoring slot begins from offset thus skip the slots which are less
+     * than offset value*/
+    if((slotNum >= searchSpace->mSlotPeriodicityAndOffset.mSlotOffset))
+    {
+        /*A pdcch Slot will start after Slotoffset and will get repeated after every
+         * SlotPeriodicity*/
+        if(((slotNum - searchSpace->mSlotPeriodicityAndOffset.mSlotOffset) % mSlotPeriodicityVal) == 0) 
+        {
+           DU_LOG("\nINFO   --> SCH: SFN:%d/Slot:%d, is a Valid PDCCH slot",pdcchTime.sfn, pdcchTime.slot);
+           isSlotValid = true;
+        }
+        else
+        {
+           DU_LOG("\nINFO   --> SCH: SFN:%d/Slot:%d, is InValid PDCCH slot",pdcchTime.sfn, pdcchTime.slot);
+        }
+    }
+    return (isSlotValid); 
+}
+
+/*
+ *  @brief: Function to check if PDCCH is available for a cceIndex
+ *
+ *  Function: schCheckPdcchAvail
+ *
+ *   This function checks if the PRBs available for a particular CCE during
+ *   PDCCH allocation
+ *   [Step 1]: Calculate the rbgIndex from cceIndex which depends on Coreset symbol duration
+ *   i.e. a) If symbolDuration = 1; numPrbs in RBG (6) = numPrbPerCCE thus one on
+ *        one mapping between rbgIndex and cceIndex
+ *        b) if SymbolDuration =2; NumPrbs in RBG(6) = numPrbPerCCE * duration
+ *        as CCE needs 6 REG thus in 3 PRBs whole CCE can contain 
+ *        c) and so on
+ *
+ *   [Step 2]: Again StartPRB for a rbgIndex may not be same for CCE Index which
+ *             depends on duration. If duration=2, then two CCE can be occupied
+ *             in one RBGIndex thus StarPrb for secondCCE will be
+ *             numPrbsPerCCE(3) away.
+ *
+ *   @params[in]: CellCb, SlotTime, cceIndex, PDcchInfo, aggLvl
+ * */
+bool schCheckPdcchAvail(SchCellCb *cellCb, SlotTimingInfo slotTime, uint8_t cceIndex,\
+                    SchPdcchInfo *pdcchInfo, uint8_t aggLvl )
+{
+    uint8_t rbgIndex = 0, ret = 0, startSymbol = 0;
+    uint16_t startPrb = MAX_NUM_RB, numPrb = 0;
+
+    /*[Step 1]: rbgIndex to locate in FreqDomainResource parmaeter in
+     * SearchSpace*/
+    rbgIndex = cceIndex / (pdcchInfo->cRSetRef->duration);
+   
+    /*Extract StartPRB for that RBGIndex*/
+    startPrb = extractStartPrbForRBG(pdcchInfo->cRSetRef->freqDomainRsrc, rbgIndex);
+    if(startPrb == MAX_NUM_RB)
+    {
+       DU_LOG("\nERROR  -->  SCH: No RBG is allocated for PDCCH in this Coreset");
+       return false;
+    }
+    /*[Step 2]: Adjust StartPrb based on CCEIndex and duration*/
+    startPrb = startPrb + ((cceIndex % pdcchInfo->cRSetRef->duration) * (pdcchInfo->nrOfPRBPerCce));
+    startSymbol = findSsStartSymbol(pdcchInfo->ssRef->mSymbolsWithinSlot);
+
+    /*numPrb will also get adjusted with duration*/
+    numPrb = (NUM_PRBS_PER_RBG * aggLvl) / pdcchInfo->cRSetRef->duration;
+    DU_LOG("\nDEBUG  -->  SCH: RBG found for cceIndex:%d, AggLvl:%d and SymbolDuration%d with StartPrb:%d, numPrb:%d",\
+            cceIndex, aggLvl, pdcchInfo->cRSetRef->duration, startPrb, numPrb);
+
+    ret = allocatePrbDl(cellCb, slotTime, startSymbol,\
+                         pdcchInfo->cRSetRef->duration, &startPrb, numPrb);
+    
+    if(ret == RFAILED)
+    {
+       DU_LOG("\nERROR -->  SCH: PRBs can't be allocated as they are unavailable");
+       return false;
+    }
+    return true;
+
+}
+
+/*
+ * @brief: Function to select particular UE based on validation of PDCCH allocation
+ *
+ *    Function: 
+ *    This function will have multiple layers of validation for PDCCH allocation 
+ *    based on CORESET and SearchSpace configuration and availability.
+ *
+ *    [Step 1]: Check if the slot is pdcch Slot or not based on SearchSpace's
+ *    monitoringSlotInfo.
+ *    [Step 2]: Check the CQI for this UE and decide upon which Agg Level has to
+ *    be used for this PDCCH transmission
+ *    [Step 3]: find the AggLevel for this CQI = base aggregation level
+ *    [Step 4]: NextLowerAggLvl will be the next lower aggLevel when PDCCH
+ *    allocation fails for base agg Level.
+ *    [Step 5]: For each candidate , calculate the CCE Index as per TS
+ *    38.213v15, Sec 10.1 and also check PRBs falling in that CCEIndex is free.
+ *    [Step 6]: If Step 5 fails, move to next candidate and if Candidate gets
+ *    exhausted then fallback to nextAggLevel. Because as we decrease aggLevel,
+ *    numberOfCCEReq decreases so chances of PDCCH allocation increases even
+ *    though lowerAggLevel will not guarantee transmission of PDCCH as per CQI
+ *    reported.(CQI less, AggiLvlRequried is More)
+ *
+ *    @params[IN]: SchUeCb and PdcchTime
+ *          [RETURN]: isPDCCHAllocted flag(true = UE can be selected as a
+ *          candidate )
+ * */
+bool schDlCandidateSelection(SchUeCb *ueCb, SlotTimingInfo pdcchTime, SchPdcchAllocInfo *pdcchAllocInfo)
+{
+    uint8_t cRSetIdx = 0, cceIndex = 0;
+    uint8_t cqi = 0, candIdx = 0;
+    uint8_t baseAggLvl = 0, nextLowerAggLvl = 0, numCandidates = 0;
+    SchPdcchInfo *pdcchInfo = NULLP;
+    uint32_t a = 0, b = 0;
+
+    for(cRSetIdx = 0; cRSetIdx < MAX_NUM_CRSET; cRSetIdx++)
+    {
+       pdcchInfo = &ueCb->pdcchInfo[cRSetIdx];
+       if(pdcchInfo->cRSetRef == NULLP)
+       {
+          DU_LOG("\nINFO   -->  SCH: Coreset is not availabe at Index:%d",cRSetIdx);
+          continue;
+       }
+       /*[Step 1]:*/
+       if(false == schPdcchSlotValidation(pdcchTime, pdcchInfo->ssRef, ueCb->cellCb->numSlots))
+       {
+          DU_LOG("\nINFO   -->  SCH: This slot is not valid for PDCCH in this CORESET:%d.",pdcchInfo->cRSetRef->cRSetId);
+          break;
+       }
+       /*[Step 2]:*/
+       /*TODO: CQI is reported in DL_CQI_IND which has to be processed and
+        * report has to be stored in ueCb.For now, HardCoding the value*/
+        cqi = 5;
+
+        /*[Step 3]: */
+        baseAggLvl = pdcchInfo->cqiIndxAggLvlMap[cqi];
+
+        /*[Step 4]:*/
+        nextLowerAggLvl = baseAggLvl;
+
+        /*Loop to traverse through each AggLvl from higher value of aggLevel to
+         * 1 AggLvl*/
+        do
+        {
+           /*Configured num of candidates for each Agg Level in search space */
+           numCandidates = extractNumOfCandForAggLvl(pdcchInfo->ssRef, nextLowerAggLvl); 
+           if(!numCandidates)
+           {
+             DU_LOG("\nINFO   --> SCH:  Num Of Candidates configured for this AggLvel:%d is ZERO",baseAggLvl);
+           }
+
+           /*[Step 5]:*/
+           for(candIdx= 0; candIdx < numCandidates; candIdx++)
+           {
+               /*Formula reference 3GPP TS 38.213v15, Sec 10.1, Variable 'a' and
+                * 'b' is used for segmenting the formulat for readability purpose
+                * */
+               a = pdcchInfo->y[pdcchTime.slot] + \
+                     ceil((candIdx * pdcchInfo->totalCceCount)/(baseAggLvl * numCandidates));
+               b = ceil(pdcchInfo->totalCceCount * baseAggLvl);
+               cceIndex = baseAggLvl * (a % b); 
+               if(schCheckPdcchAvail(ueCb->cellCb, pdcchTime, cceIndex, pdcchInfo,nextLowerAggLvl) == true)
+               {
+                  DU_LOG("\nINFO   -->  SCH: PDCCH allocation is successful at cceIndex:%d",cceIndex);
+                  pdcchAllocInfo->cRSetId = pdcchInfo->cRSetRef->cRSetId;
+                  pdcchAllocInfo->aggLvl = nextLowerAggLvl;
+                  pdcchAllocInfo->cceIndex = cceIndex;
+                  pdcchAllocInfo->ssId = pdcchInfo->ssRef->searchSpaceId;
+                  return true;  
+               }
+           }
+           nextLowerAggLvl = nextLowerAggLvl >> 1;
+        }while(nextLowerAggLvl > 0 && nextLowerAggLvl <= 16);
+    }
+    return false;
+}
 /**********************************************************************
   End of file
  **********************************************************************/

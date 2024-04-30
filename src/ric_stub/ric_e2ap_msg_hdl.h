@@ -31,7 +31,14 @@
 #define CELL_INDEX      0
 
 #define RIC_STYLE_TYPE  1
-#define RIC_ACTION_GRANULARITY_PERIOD 100
+
+/* if config type is CONFIG_ADD then 
+ * for action Id = n, RIC_ACTION_GRANULARITY_PERIOD = 100+ n*100 
+ * else config type is CONFIG_MOD then
+ * for action Id = n, RIC_ACTION_GRANULARITY_PERIOD =  100 +50(n+1) */ 
+#define RIC_ACTION_GRANULARITY_PERIOD(_configType, _actionId)   \
+   ((_configType == CONFIG_ADD) ?  (100 + 100 * _actionId ) : ( 100 + 50 *( _actionId +1))) 
+
 /* allocate and zero out a static buffer */
 #define RIC_ALLOC(_datPtr, _size)                                \
 {                                                               \
@@ -54,11 +61,19 @@
 
 
 void E2APMsgHdlr(uint32_t *duId, Buffer *mBuf);
-uint8_t BuildAndSendE2SetupRsp(DuDb *duDb, uint8_t transId);
+uint8_t BuildAndSendE2SetupRsp(DuDb *duDb, uint8_t transId, E2NodeConfigList e2NodeList);
 uint8_t BuildAndSendRicSubscriptionReq(DuDb *duDb);
 uint8_t SendE2APMsg(Region region, Pool pool, uint32_t duId);
 uint8_t BuildAndSendRicServiceQuery(DuDb *duDb);
 uint8_t BuildAndSendE2NodeConfigUpdateFailure(uint32_t duId, uint8_t transId, uint8_t causeInfo, uint8_t causeReason);
+uint8_t fillE2NodeConfigAck(PTR e2NodeCfg, uint8_t procedureCode, E2NodeComponent *componentInfo, bool isSuccessful);
+E2NodeComponent *fetchE2NodeComponentInfo(DuDb *duDb, InterfaceType interfaceType,CmLList **e2ComponentNode);
+uint8_t handleE2NodeComponentAction(DuDb *duDb, PTR e2NodeCfg, uint8_t protocolId, E2NodeConfigItem *storeCfg);
+uint8_t BuildAndSendE2NodeConfigUpdateAck(DuDb *duDb, uint8_t transId,  E2NodeConfigList *e2NodeList);
+uint8_t BuildAndSendConnectionUpdate(uint32_t duId);
+uint8_t BuildAndSendE2ConnectionUpdate(uint32_t duId, E2Connection connectionInfo);
+uint8_t BuildAndSendRicSubscriptionDeleteRequest(uint32_t duId, RicSubscription *ricSubsDb);
+void BuildRicSubsModificationReq(DuDb *duDb, RicSubscription *ricSubsInfo);
 
 /**********************************************************************
          End of file

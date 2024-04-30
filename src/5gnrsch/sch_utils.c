@@ -766,6 +766,36 @@ uint8_t pucchResourceSet[MAX_PUCCH_RES_SET_IDX][4] = {
 { 1,   0, 14,  0 }, /* index 15 */
 };
 
+/*CQI Table From Spec 38.214 Table 5.2.2.1-2
+ * {Modulation Scheme, CodeRate, Efficiency(bits per symbol)}
+ * Modulation Scheme is numbered based on bit rate as follows
+ * QPSK = 2, 16QAM = 4, 64QAM = 6
+ * */
+float cqiTable1[MAX_NUM_CQI_IDX][3] = {
+{ 0, 0, 0},        /*index 0*/
+{ 2, 78, 0.1523},  /*index 1*/
+{ 2, 120, 0.2344}, /*index 2*/
+{ 2, 193, 0.3770}, /*index 3*/
+{ 2, 308, 0.6016}, /*index 4*/
+{ 2, 449, 0.8770}, /*index 5*/
+{ 2, 602, 1.1758}, /*index 6*/
+{ 4, 378, 1.4766}, /*index 7*/
+{ 4, 490, 1.9141}, /*index 8*/
+{ 4, 616, 2.4063}, /*index 9*/
+{ 6, 466, 2.7305}, /*index 10*/
+{ 6, 567, 3.3223}, /*index 11*/
+{ 6, 666, 3.9023}, /*index 12*/
+{ 6, 772, 4.5234}, /*index 13*/
+{ 6, 873, 5.1152}, /*index 14*/
+{ 6, 948, 5.5547}, /*index 15*/
+};
+
+/*As per Spec 38.211 Table 7.3.2.1-1, using number of CCE per AggLevel 
+ * Num of RE for Agg Level = numCCEPerAggLevel * (6 REG) * (12 Subcarriers)
+ */
+uint16_t totalRE_PerAggLevel[MAX_NUM_AGG_LVL]= {72, 144, 288, 576, 1152};
+
+
 /* Minimum Msg3 scheduling time should be calculated based on N1+N2+NTAmax+0.5
  * ms formula.
  * Refer spec 38.213 section 8.3.
@@ -1786,57 +1816,473 @@ uint8_t calculateSlotPatternLength(uint8_t scs, uint8_t periodicity)
 }
 #endif
 
-/*
- * As per FAPI spec, 
- * Frequency domain resources is a bitmap defining non-overlapping groups of 6 PRBs in ascending order.
- * [TS38.213 10.1]. Bitmap of uint8 array. 45 bits.
+/**
+ * @brief Function to find start Symbol Index of Coreset defined in SearchSpace(SS)
  *
- * As per IAPI,
- * CORESET-freqdom.frequencyDomainResources : The bits of the bitmap have a one-to-one mapping with
- * non-overlapping groups of 6 RBs. The most significant bit of the first word corresponds to
- * the most significant bit defined in 38.331.
+ * @details
  *
- * FAPI and IAPI both are 45 bits. Mapped from bit 0 LS Byte for the FAPI and
- * bit 0 LS U32 entry for IAPI.
- * FAPI is to be filled in following format such that Intel L1 is able to decode it :
+ *     Function: findSsStartSymbol
  *
- *            FAPI                                 IAPI 
- * FreqDomainResource[0] bits 7-0     ->    nFreqDomain[0] bits 7-0
- * FreqDomainResource[1] bits 7-0     ->    nFreqDomain[0] bits 15-8
- * FreqDomainResource[2] bits 7-0     ->    nFreqDomain[0] bits 23-16
- * FreqDomainResource[3] bits 7-0     ->    nFreqDomain[0] bits 31-24
- * FreqDomainResource[4] bits 7-0     ->    nFreqDomain[1] bits 7-0
- * FreqDomainResource[5] bits 7-0     ->    nFreqDomain[1] bits 15-8
+ *     This function finds first the startSymbol Index of a CORESET 
+ *     which is defined in SearchSpace.monitoringSymbolWithinSlot parameter
  *
- * where for the last entry bits 7,6 and 5 are don't care in the FAPI and bits
- * 31-13 are don't care in the IAPI.
- */
-void covertFreqDomRsrcMapToIAPIFormat(uint8_t *sourceBitMap, uint8_t *destBitMap)
+ *  @param[in]  uint8_t mSymbolsWithinSlot[2]
+ *        mSymbolsWithinSlot[0] >> MSB as 7th Symbol to LSB as 0th Symbol
+ *        mSymbolsWithinSlot[1] >> 0th bit as 8th Symbol, 1st bit as 9th,
+ *                                   ...,5th bit as 13th symbol
+ *  @return     Success : First SS Symbol Index
+ *              Failure : MAX_SYMB_PER_SLOT(Invalid value of SymbolIndex = 14)
+**/
+uint8_t findSsStartSymbol(uint8_t *mSymbolsWithinSlot)
 {
-   int8_t  idx;
-   uint8_t  numBitsToShift = 0;
-   uint64_t freqDomainResources = 0;
+   uint8_t symbolIdx = 0;
+   uint8_t i = 1, symPos = 0;
 
-   /* Bit operation to create a 64-bit integer that has
-    * 48 LSBs [Bit 47 to Bit 0] mapped to sourceBitMap[0] to sourceBitMap[5]
-    */
-   for(idx = FREQ_DOM_RSRC_SIZE-1; idx >=0; idx--)
+   for(symbolIdx = 0; symbolIdx < MONITORING_SYMB_WITHIN_SLOT_SIZE; symbolIdx++)
    {
-      freqDomainResources |= ((uint64_t)sourceBitMap[idx] << numBitsToShift);
-      numBitsToShift += 8;
+      i = 1, symPos = 0;
+      while(i)
+      {
+         /*The first Symbol(or bit) enabled(set) is the StartSymbol of SS thus
+          *returning if we find that bitPosition */
+         if(mSymbolsWithinSlot[symbolIdx] & i)
+         {
+            /*Adding (SymbolIdx*8) for SymbolIndex between 8 and 13*/
+            return (symPos + (symbolIdx * 8));
+         }
+         i = i << 1;
+         symPos++;
+      }
+   }
+   return(MAX_SYMB_PER_SLOT);
+}
+
+/*
+ *  @brief: Function will extract the StartPrb as per the given RBGIndex 
+ *
+ *  Function: extractStartPrbForRBG
+ *
+ *  This function will extract the StartPrb of a rbgIndex. This RbgIndex doesnt
+ *  have direct mapping with index in FreqDomRsrc instead it is mapping with
+ *  those rbg which is set(i.e. available for PDCCH)
+ *
+ *  @param[in]  uint8_t freqDomainRsrc[6] (As per Spec 38.331, ControlResourceSet.frequencyDomainResources)
+ *                 freqDomainRsrc[0] =RBG0 to RBG7
+ *                 freqDomainRsrc[1] =RBG8 to RBG15
+ *                 ...
+ *                 freqDomainRsrc[5] =RBG40 to RBG47
+ *                 (Every RBG has 6 PRBs)
+ *
+ *              uint8_t rbgIndex
+ *
+ *
+ *         [return]: startPrb of that rbgIndex
+ * */
+uint16_t extractStartPrbForRBG(uint8_t *freqDomainRsrc, uint8_t rbgIndex)
+{
+   uint8_t freqIdx = 0, idx = 0;
+   uint8_t count = 0, bitPos = 0;
+   uint8_t totalPrbPerFreqIdx = NUM_PRBS_PER_RBG * 8; /*8 = no. of Bits in uint8_t*/
+   uint16_t startPrb = MAX_NUM_RB;
+
+   for(freqIdx = 0; freqIdx < FREQ_DOM_RSRC_SIZE; freqIdx++)
+   {
+      if(freqDomainRsrc[freqIdx] & 0xFF)
+      {
+         /*Tracking from the 7th Bit because in FreqDomRsrc , lowestPRB is
+          * stored in MSB and so on*/
+         idx = 128;
+         bitPos = 0;
+         while(idx)
+         {
+           if(freqDomainRsrc[freqIdx] & idx)
+           {
+               if(count == rbgIndex)
+               {
+                  startPrb = (totalPrbPerFreqIdx * freqIdx) + (bitPos * NUM_PRBS_PER_RBG);
+                  return startPrb;
+               }
+               count++;
+           }
+           bitPos++;
+           idx = idx >> 1;
+         }
+      }
+   }
+   return startPrb;
+}
+/**
+ * @brief Function to count number of RBG from Coreset's FreqDomainResource 
+ *
+ * @details
+ *
+ *     Function: countRBGFrmCoresetFreqRsrc
+ *
+ * This function counts RBG for calculating the coresetSize using CORESET.freqDomainResource 
+ * In this, we will find the number of RBG groups which are allowed for this
+ * coreset
+ *
+ *  @param[in]  uint8_t freqDomainRsrc[6] (As per Spec 38.331, ControlResourceSet.frequencyDomainResources)
+ *              freqDomainRsrc[0] =RBG0 to RBG7
+ *              freqDomainRsrc[1] =RBG8 to RBG15
+ *              ...
+ *              freqDomainRsrc[5] =RBG40 to RBG47
+ *              (Every RBG has 6 PRBs)
+ *  @return     Success : Total Number of RGBs in CORESET which can be allocated
+ *              Failure : 0
+**/
+uint8_t countRBGFrmCoresetFreqRsrc(uint8_t *freqDomainRsrc)
+{
+   uint8_t freqIdx = 0, idx = 0;
+   uint8_t count = 0;
+
+   for(freqIdx = 0; freqIdx < FREQ_DOM_RSRC_SIZE; freqIdx++)
+   {
+      if(freqDomainRsrc[freqIdx] & 0xFF)
+      {
+         idx = 1;
+         while(idx)
+         {
+           if(freqDomainRsrc[freqIdx] & idx)
+           {
+               count++;
+           }
+           idx = idx << 1;
+         }
+      }
+   }
+   return count;
+}
+
+/*
+ * @brief Function to calculate the DciSize in bits for format 1_0 
+ *
+ * @details
+ *
+ *   Function: calcUeDciSizeFormat1_0
+ *   Calculates the totalBit Size for sending this DCI format 1_0 
+ *   Spec Reference: 38.212, Format 1_0 scrambled using C_RNTI
+ *
+ * @Params[in] : CoresetSize (for calculating Frequency domain
+ *          resource assignment)
+ **/
+
+uint16_t calcUeDciSizeFormat1_0(uint16_t coresetSize)
+{
+   uint16_t dciSizeInBits = 0;
+
+   /* Size(in bits) of each field in DCI format 1_0 */
+   /*Below fields are identified from 3gpp spec 38.212, 38.213, 38.214*/
+   uint8_t dciFormatIdSize    = 1;
+   uint8_t freqDomResAssignSize = 0;
+   uint8_t timeDomResAssignSize = 4;
+   uint8_t VRB2PRBMapSize       = 1;
+   uint8_t modNCodSchemeSize    = 5;
+   uint8_t ndiSize              = 1;
+   uint8_t redundancyVerSize    = 2;
+   uint8_t harqProcessNumSize   = 4;
+   uint8_t dlAssignmentIdxSize  = 2;
+   uint8_t pucchTpcSize         = 2;
+   uint8_t pucchResoIndSize     = 3;
+   uint8_t harqFeedbackIndSize  = 3;
+
+   freqDomResAssignSize = ceil(log2(coresetSize * (coresetSize + 1) / 2));
+
+   dciSizeInBits = (dciFormatIdSize + freqDomResAssignSize\
+         + timeDomResAssignSize + VRB2PRBMapSize + modNCodSchemeSize\
+         + ndiSize + redundancyVerSize + harqProcessNumSize + dlAssignmentIdxSize\
+         + pucchTpcSize + pucchResoIndSize + harqFeedbackIndSize);
+
+   return(dciSizeInBits);
+}
+
+/*
+ * @brief Function to calculate the aggLvl mapping with CQI index
+ *
+ * @details
+ *
+ *   Function: fillCqiAggLvlMapping
+ *
+ *   Fills the CQI index and Agg level mapping based on 3gpp 38.214,Table 5.2.2.1-2
+ *   The mapping will be later during PDCCH allocation
+ *   [Step 1]: Calculate the DciSize in bits. This will be UE-specific as it depends
+ *             on CORESETsize
+ *   [Step 2]: Starting from CqiIdx = 0, calculate the efficientPdcchBits which
+ *   can be sent for that CQI and check if the availBits for each agg level is
+ *   sufficient for that pdcch required bits.
+ *        > If the bits required by PDCCH can be contained with Agg Level's
+ *        availBits then that is assigned.
+ *  Note:: Good channel, CQI (high value) then Aggrevation level is assigned
+ *  less(less number of CCE is sufficient) and vice versa for low CQI
+ *
+ *  @param[in]: PDCCH Info inside ueCb
+ *
+ *       [return]: void
+ **/
+
+void fillCqiAggLvlMapping(SchPdcchInfo *pdcchInfo)
+{
+   uint8_t cqiIdx = 0, aggLvlIdx =0;
+   uint16_t numOfBitsAvailForAggLevel = 0, dciSize = 0, pdcchBits = 0;
+
+   /*[Step 1]:*/
+   dciSize = calcUeDciSizeFormat1_0(pdcchInfo->totalPrbs);
+
+   /* Initializing the map array*/
+   memset(pdcchInfo->cqiIndxAggLvlMap, 0, MAX_NUM_CQI_IDX);
+
+   /*Note: For CqiIdx = 0, aggLevel is marked as 0 which means that Channel
+    * Quality is not suitable for any transmission*/
+   for(cqiIdx = 1; cqiIdx < MAX_NUM_CQI_IDX; cqiIdx++)
+   {
+      /*CQI table number 1 is used Spec 38.214 Table 5.2.2.1-2 by default.
+       *TODO: cqi-table param in CSI-RepotConfig(3gpp 38.331) will report
+       * which table to be used*/
+      pdcchBits = ceil(dciSize / cqiTable1[cqiIdx][2]);
+      for(aggLvlIdx = 0; (aggLvlIdx < MAX_NUM_AGG_LVL) && (pdcchBits != 0); aggLvlIdx++)
+      {
+         numOfBitsAvailForAggLevel = (totalRE_PerAggLevel[aggLvlIdx] * cqiTable1[cqiIdx][0]);
+         /*Check if AggLevel has sufficient bits available for pdcchBits*/
+         if(pdcchBits < numOfBitsAvailForAggLevel)
+         {
+            pdcchInfo->cqiIndxAggLvlMap[cqiIdx] = 1 << aggLvlIdx;
+            break;
+         }
+      }
+
+      /*Below case will hit when required pdcchBits is not accomated by any Agg
+       * Levl which means Channel quality is worse. Thus transmission has to be
+       * most aggressive thus highest value of Agg level will be used.*/
+      if(!pdcchInfo->cqiIndxAggLvlMap[cqiIdx])
+         pdcchInfo->cqiIndxAggLvlMap[cqiIdx] = 16;
+   }
+}
+
+/*
+ * @brief Function to calculate Value Y 
+ *
+ *   Function: schCalY
+ *
+ *   Calculates value of YpKp as per [10.1,TS38.213].
+ *   A0 is for first CS, A1 for second CS and A2 is for third CS
+ *
+ *   @params[in]: coresetId and Previous Y
+ * */
+uint32_t schCalY(uint8_t csId, uint32_t prevY)
+{
+   uint32_t A0 = 39827, A1 = 39829, A2 = 39839;
+   uint32_t D = 65537;
+
+   switch(csId % 3)
+   {
+      case 0:
+        {
+           return((A0 * prevY) % D);                 
+        } 
+      case 1:
+        {
+           return((A1 * prevY) % D);                 
+        } 
+      case 2:
+        {
+           return((A2 * prevY) % D);                 
+        }
+      default:
+        {
+           DU_LOG("\nERROR  --> SCH: Issue in calculating value of Y");
+           return(0);
+        }
+   }
+   return 0;
+}
+
+/*
+ * @brief Function to calculate the value Y used for CCE Index formula
+ *
+ *   Function: schUpdValY
+ *
+ *   As per Spec 38.213, Sec 10.1 Formula for CCE Index contains a coefficient
+ *   value called 'Y' and storing the same in the ueCb which will be later used
+ *   in pdcch allocation
+ *
+ * @params[in] : SchUeCb, PdcchInfo
+ *    [return] : uint8_t ROK, RFAILED : Memory allocation status
+ *
+ * */
+uint8_t schUpdValY(SchUeCb *ueCb, SchPdcchInfo *pdcchInfo)
+{
+   uint8_t slotIdx = 0;
+
+   SCH_ALLOC(pdcchInfo->y, (sizeof(uint32_t) *  ueCb->cellCb->numSlots));
+   if(pdcchInfo->y == NULLP)
+   {
+      DU_LOG("\nERROR  --> SCH: Memory Allocation of Y failed");
+      return RFAILED;
    }
 
-   /* Right shift 3 bits because bits[2-0] are unused in sourceBitMap[5] */
-   freqDomainResources = freqDomainResources >> 3;
-
-   /* Filling destBitMap such that LSB bit 0 of freqDomainResources maps to LSB 
-    * of first word of destBitMap */
-   numBitsToShift = 0;
-   for(idx=0; idx<FREQ_DOM_RSRC_SIZE; idx++)
+   for(slotIdx= 0 ; slotIdx < ueCb->cellCb->numSlots; slotIdx++)
    {
-      destBitMap[idx] = freqDomainResources >> numBitsToShift;
-      numBitsToShift += 8;
+      if(slotIdx == 0)
+      {
+         pdcchInfo->y[slotIdx] = schCalY(pdcchInfo->cRSetRef->cRSetId, ueCb->crnti);
+      }
+      else
+      {
+         pdcchInfo->y[slotIdx] = schCalY(pdcchInfo->cRSetRef->cRSetId, pdcchInfo->y[slotIdx - 1]);
+      }
    }
+   return ROK;
+}
+
+/*
+ *  @brief : Function to convert SlotPeriodicity to Value
+ *
+ *  Function: schConvertSlotPeriodicityEnumToValue
+ *
+ *  @param[IN]: SchMSlotPeriodicity enum
+ *        [return]: slotOffsetVal
+ * */
+uint16_t schConvertSlotPeriodicityEnumToValue(SchMSlotPeriodicity slotPeriod)
+{
+   uint16_t slotPeriodVal = 0;
+
+   switch(slotPeriod)
+   {
+      case SLOT_PERIODICITY_SL_1:
+      {
+         slotPeriodVal = 1;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_2:
+      {
+         slotPeriodVal = 2;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_4:
+      {
+         slotPeriodVal = 4;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_5:
+      {
+         slotPeriodVal = 5;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_8:
+      {
+         slotPeriodVal = 8;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_10:
+      {
+         slotPeriodVal = 10;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_16:
+      {
+         slotPeriodVal = 16;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_20:
+      {
+         slotPeriodVal = 20;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_40:
+      {
+         slotPeriodVal = 40;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_80:
+      {
+         slotPeriodVal = 80;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_160:
+      {
+         slotPeriodVal = 160;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_320:
+      {
+         slotPeriodVal = 320;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_640:
+      {
+         slotPeriodVal = 640;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_1280:
+      {
+         slotPeriodVal = 1280;
+         break;
+      }
+      case SLOT_PERIODICITY_SL_2560:
+      {
+         slotPeriodVal = 2560;
+         break;
+      }
+      default:
+      {
+         slotPeriodVal = 0;
+         break;
+      }
+   }
+   return slotPeriodVal;
+}
+
+/*
+ *  @brief: Function to extract the numCandidates from aggLevel.
+ *
+ *  Function: extractNumOfCandForAggLvl
+ *
+ *  @params[IN]: SearchSpace, aggLevel
+ *         [RETURN]: numCandidates.
+ * */
+uint8_t extractNumOfCandForAggLvl(SchSearchSpace *searchSpace, uint8_t aggLvl)
+{
+   uint8_t numCand = 0;
+
+   switch(aggLvl)
+   {
+      case 1:
+      {
+         numCand = searchSpace->numCandidatesAggLevel1;
+         break;
+      }
+      case 2:
+      {
+         numCand = searchSpace->numCandidatesAggLevel2;
+         break;
+      }
+      case 4:
+      {
+         numCand = searchSpace->numCandidatesAggLevel4;
+         break;
+      }
+      case 8:
+      {
+         numCand = searchSpace->numCandidatesAggLevel8;
+         break;
+      }
+      case 16:
+      {
+         numCand = searchSpace->numCandidatesAggLevel16;
+         break;
+      }
+      default:
+      {
+         numCand = 0;
+      }
+      /*AGGREGATION_LEVEL_N8 enum Value is 7 thus hardcoding the correct Value
+       * (8)*/
+      if(numCand == AGGREGATION_LEVEL_N8)
+      {
+         numCand = 8;
+      }
+   }
+   return numCand;
 }
 /**********************************************************************
          End of file
