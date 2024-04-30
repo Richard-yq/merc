@@ -618,8 +618,10 @@ typedef struct failureCause
 typedef struct carrierCfg
 {
    uint32_t   dlBw;                          /* DL bandwidth */
+   uint32_t   arfcnDL;                 /* Absolute frequency Number of DL */   
    uint32_t   dlFreq;                        /* Absolute frequency of DL point A in KHz */
    uint32_t   ulBw;                          /* UL bandwidth */
+   uint32_t   arfcnUL;                 /* Absolute frequency Number of UL */   
    uint32_t   ulFreq;                        /* Absolute frequency of UL point A in KHz */
    uint16_t   dlgridSize[NUM_NUMEROLOGY];    /* DL Grid size for each numerologies */
    uint16_t   ulgridSize[NUM_NUMEROLOGY];    /* UL Grid size for each numerologies */   
@@ -2290,7 +2292,7 @@ uint8_t MacProcVnfCfgReq(Pst* pst, vnf_cfg_t* vnf_config);
 #endif
 /* ======================================== */
 
-#endif
+
 uint8_t packDuMacStatsDeleteReq(Pst *pst, MacStatsDeleteReq *statsDeleteReq);
 uint8_t MacProcStatsDeleteReq(Pst *pst, MacStatsDeleteReq *statsDeleteReq);
 uint8_t unpackMacStatsDeleteReq(DuMacStatsDeleteReqFunc func, Pst *pst, Buffer *mBuf);
